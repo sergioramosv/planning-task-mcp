@@ -5,6 +5,7 @@ import { join, resolve, dirname } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,8 +36,33 @@ function printStep(num, total, title) {
   console.log(`\n  ── Paso ${num}/${total}: ${title} ──\n`);
 }
 
+function ensureDependencies() {
+  const nodeModulesPath = join(PROJECT_ROOT, 'node_modules');
+  const sdkPath = join(nodeModulesPath, '@modelcontextprotocol', 'sdk');
+  const firebasePath = join(nodeModulesPath, 'firebase-admin');
+
+  if (existsSync(sdkPath) && existsSync(firebasePath)) {
+    console.log('  ✓ Dependencias ya instaladas\n');
+    return;
+  }
+
+  console.log('  Instalando dependencias (npm install)...');
+  try {
+    execSync('npm install', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+    console.log('  ✓ Dependencias instaladas correctamente\n');
+  } catch (err) {
+    console.error(`  ✗ ERROR al instalar dependencias: ${err.message}`);
+    console.error('  Intenta manualmente: cd ' + PROJECT_ROOT + ' && npm install');
+    process.exit(1);
+  }
+}
+
 async function setup() {
   printBanner();
+
+  // ═══ STEP 0: Ensure node_modules ═══
+  printStep(0, 6, 'Verificar dependencias de Node');
+  ensureDependencies();
 
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -48,7 +74,7 @@ async function setup() {
 
   try {
     // ═══ STEP 1: Service Account Key ═══
-    printStep(1, 5, 'Service Account Key de Firebase');
+    printStep(1, 6, 'Service Account Key de Firebase');
     console.log('  Descárgalo desde:');
     console.log('  Firebase Console → Configuración del proyecto');
     console.log('  → Cuentas de servicio → Generar nueva clave privada\n');
@@ -78,7 +104,7 @@ async function setup() {
     }
 
     // ═══ STEP 2: Database URL ═══
-    printStep(2, 5, 'URL de Realtime Database');
+    printStep(2, 6, 'URL de Realtime Database');
     console.log('  Encuéntrala en:');
     console.log('  Firebase Console → Realtime Database → URL en la parte superior\n');
 
@@ -101,7 +127,7 @@ async function setup() {
     console.log(`  ✓ Database URL: ${finalDbUrl}`);
 
     // ═══ STEP 3: User ID ═══
-    printStep(3, 5, 'Tu UID de Firebase Auth');
+    printStep(3, 6, 'Tu UID de Firebase Auth');
     console.log('  Encuéntralo en:');
     console.log('  Firebase Console → Authentication → Users → columna "UID"\n');
 
@@ -114,7 +140,7 @@ async function setup() {
     if (finalUserId) console.log(`  ✓ User ID: ${finalUserId}`);
 
     // ═══ STEP 4: User Name ═══
-    printStep(4, 5, 'Tu nombre de usuario');
+    printStep(4, 6, 'Tu nombre de usuario');
 
     const currentUserName = currentEnv.match(/DEFAULT_USER_NAME=(.+)/)?.[1] || '';
     const userName = await ask(
@@ -134,7 +160,7 @@ async function setup() {
     writeFileSync(ENV_PATH, envContent);
 
     // ═══ STEP 5: Configure MCP in clients ═══
-    printStep(5, 5, 'Registrar MCP en clientes');
+    printStep(5, 6, 'Registrar MCP en clientes');
 
     const indexPath = join(PROJECT_ROOT, 'src', 'index.js').replace(/\\/g, '/');
     const mcpServerEntry = {
@@ -232,17 +258,48 @@ async function setup() {
       console.log(JSON.stringify({ mcpServers: { 'planning-mcp': mcpServerEntry } }, null, 2));
     }
 
-    // ═══ VERIFICATION ═══
-    console.log('\n  ╔══════════════════════════════════════════╗');
+    // ═══ STEP 6: VERIFICATION ═══
+    printStep(6, 6, 'Verificación completa');
+
+    const nodeModulesOk = existsSync(join(PROJECT_ROOT, 'node_modules', '@modelcontextprotocol', 'sdk'));
+    const saKeyOk = existsSync(SA_KEY_PATH);
+    const envOk = existsSync(ENV_PATH);
+    const dbUrlOk = Boolean(finalDbUrl);
+    const userIdOk = Boolean(finalUserId);
+    const userNameOk = Boolean(finalUserName);
+
+    // Validate serviceAccountKey structure
+    let saKeyValid = false;
+    if (saKeyOk) {
+      try {
+        const sa = JSON.parse(readFileSync(SA_KEY_PATH, 'utf-8'));
+        saKeyValid = sa.type === 'service_account' && Boolean(sa.private_key) && Boolean(sa.project_id);
+      } catch { /* */ }
+    }
+
+    console.log('  ╔══════════════════════════════════════════╗');
     console.log('  ║            Setup Completado               ║');
     console.log('  ╚══════════════════════════════════════════╝\n');
-    console.log(`  serviceAccountKey.json  ${existsSync(SA_KEY_PATH) ? '✓' : '✗'}`);
-    console.log(`  .env                    ${existsSync(ENV_PATH) ? '✓' : '✗'}`);
-    console.log(`  Database URL            ${finalDbUrl ? '✓' : '✗'}  ${finalDbUrl}`);
-    console.log(`  User ID                 ${finalUserId ? '✓' : '⚠'}  ${finalUserId || '(no configurado)'}`);
-    console.log(`  User Name               ${finalUserName ? '✓' : '⚠'}  ${finalUserName || '(no configurado)'}`);
+    console.log(`  node_modules            ${nodeModulesOk ? '✓' : '✗'}  ${nodeModulesOk ? 'SDK + Firebase instalados' : 'FALTAN dependencias'}`);
+    console.log(`  serviceAccountKey.json  ${saKeyValid ? '✓' : saKeyOk ? '⚠ estructura inválida' : '✗'}`);
+    console.log(`  .env                    ${envOk ? '✓' : '✗'}`);
+    console.log(`  Database URL            ${dbUrlOk ? '✓' : '✗'}  ${finalDbUrl || '(vacío)'}`);
+    console.log(`  User ID                 ${userIdOk ? '✓' : '⚠'}  ${finalUserId || '(no configurado)'}`);
+    console.log(`  User Name               ${userNameOk ? '✓' : '⚠'}  ${finalUserName || '(no configurado)'}`);
     if (configuredClients.length > 0) {
       console.log(`  Clientes MCP            ✓  ${configuredClients.join(', ')}`);
+    }
+
+    // Check for critical failures
+    const critical = [];
+    if (!nodeModulesOk) critical.push('npm install');
+    if (!saKeyValid) critical.push('serviceAccountKey.json');
+    if (!dbUrlOk) critical.push('FIREBASE_DATABASE_URL');
+
+    if (critical.length > 0) {
+      console.log(`\n  ✗ ERRORES CRITICOS: Faltan ${critical.join(', ')}`);
+      console.log('  El servidor NO podrá arrancar hasta que se resuelvan.\n');
+      process.exit(1);
     }
 
     // Test connection
@@ -259,6 +316,24 @@ async function setup() {
     } catch (err) {
       console.log(`  ✗ Error de conexión: ${err.message}`);
       console.log('  Verifica que la URL y el serviceAccountKey sean correctos.\n');
+    }
+
+    // Test server can actually start (quick smoke test)
+    console.log('  Verificando que el servidor MCP arranca...');
+    try {
+      const indexPath = join(PROJECT_ROOT, 'src', 'index.js');
+      // Import the config validation only (don't start the full server)
+      const { validateConfig } = await import('./config.js');
+      const configErrors = validateConfig();
+      if (configErrors.length === 0) {
+        console.log('  ✓ Configuración válida. El servidor está listo para arrancar.\n');
+      } else {
+        console.log('  ✗ Errores de configuración:');
+        configErrors.forEach(e => console.log(`    - ${e}`));
+        console.log('');
+      }
+    } catch (err) {
+      console.log(`  ✗ Error al verificar servidor: ${err.message}\n`);
     }
 
     console.log('  ─────────────────────────────────────────');
