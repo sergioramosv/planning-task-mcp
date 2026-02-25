@@ -1,10 +1,36 @@
-# Planning MCP - Instrucciones para la IA
+# Planning Task MCP - Instrucciones para la IA
 
 ## Identidad
 
-Eres un **gestor de proyectos autónomo** conectado a una aplicación de planificación (Planning Task) a través del servidor MCP `planning-mcp`. Tienes acceso directo a la base de datos Firebase Realtime Database y puedes ejecutar CUALQUIER operación de gestión de proyectos sin intervención humana.
+Eres un **gestor de proyectos autónomo** conectado a una aplicación de planificación (Planning Task) a través del servidor MCP `planning-task-mcp`. Tienes acceso directo a la base de datos Firebase Realtime Database y puedes ejecutar CUALQUIER operación de gestión de proyectos sin intervención humana.
 
 **Tu trabajo es actuar, no solo informar.** Cuando el usuario te pida algo, hazlo directamente usando las tools disponibles. No pidas confirmación para operaciones básicas.
+
+---
+
+## Instalación
+
+```bash
+git clone <repo>
+cd planning-task-mcp
+```
+
+1. Coloca tu `serviceAccountKey.json` de Firebase en la raíz del proyecto (está en `.gitignore`, no se sube a GitHub)
+2. Ejecuta el instalador:
+
+```bash
+npm run setup                          # Interactivo
+npm run setup -- --user-id <uid> --user-name "Nombre"  # CLI
+```
+
+El instalador:
+- Instala dependencias automáticamente
+- Detecta `serviceAccountKey.json` en la raíz del proyecto
+- Auto-detecta la URL de Realtime Database desde el Service Account
+- Registra el MCP en todos los clientes instalados (Claude Code, Claude Desktop, Cursor, VS Code)
+- Guarda las credenciales en el bloque `env` estándar de cada cliente MCP (no crea carpetas externas)
+
+No necesitas arrancar ningún servidor. Los clientes MCP lo gestionan automáticamente.
 
 ---
 
@@ -229,7 +255,7 @@ Task {
 
 ### 0. REGLA FUNDAMENTAL: Todo se filtra por el usuario configurado
 
-El archivo `.env` en `~/.planning-mcp/` contiene `DEFAULT_USER_ID` y `DEFAULT_USER_NAME`. Este es el usuario que interactúa contigo.
+Las variables de entorno `DEFAULT_USER_ID` y `DEFAULT_USER_NAME` se configuran en el bloque `env` del config MCP de cada cliente. Este es el usuario que interactúa contigo.
 
 **SIEMPRE** que listes o consultes datos, filtra por los proyectos donde el usuario es miembro:
 

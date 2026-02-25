@@ -1,10 +1,10 @@
 {
-  "name": "planning-mcp",
+  "name": "planning-task-mcp",
   "version": "1.0.0",
   "description": "MCP Server for Planning Task - Full autonomous project management via Firebase Realtime Database",
   "type": "module",
   "bin": {
-    "planning-mcp": "./src/index.js"
+    "planning-task-mcp": "./src/index.js"
   },
   "scripts": {
     "setup": "node src/setup.js",

@@ -28,7 +28,7 @@ if (errors.length > 0) {
 }
 
 const server = new McpServer({
-  name: 'planning-mcp',
+  name: 'planning-task-mcp',
   version: '1.0.0',
   description: 'MCP Server para gestión completa de proyectos Planning Task. Permite crear proyectos, sprints, tareas con User Stories, gestionar bugs, propuestas, miembros, y planificar automáticamente desde documentos en lenguaje natural.',
 });

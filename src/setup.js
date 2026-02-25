@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
@@ -11,9 +11,50 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = resolve(__dirname, '..');
 
-const CONFIG_DIR = join(homedir(), '.planning-mcp');
-const ENV_PATH = join(CONFIG_DIR, '.env');
-const SA_KEY_PATH = join(CONFIG_DIR, 'serviceAccountKey.json');
+const TOTAL_STEPS = 6;
+
+// ─── CLI argument parsing ───
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const parsed = {};
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case '--sa-key':    parsed.saKey = args[++i]; break;
+      case '--db-url':    parsed.dbUrl = args[++i]; break;
+      case '--user-id':   parsed.userId = args[++i]; break;
+      case '--user-name': parsed.userName = args[++i]; break;
+      case '--no-register': parsed.noRegister = true; break;
+      case '--help': case '-h':
+        printHelp();
+        process.exit(0);
+    }
+  }
+  return parsed;
+}
+
+function printHelp() {
+  console.log(`
+  Planning Task MCP - Instalador
+
+  Uso:
+    npm run setup                         # Modo interactivo
+    npm run setup -- [opciones]           # Modo CLI
+
+  Opciones:
+    --sa-key <ruta>      Ruta al archivo serviceAccountKey.json
+    --db-url <url>       URL de Firebase Realtime Database
+    --user-id <uid>      UID de Firebase Auth
+    --user-name <nombre> Nombre del usuario
+    --no-register        No registrar en clientes MCP
+    -h, --help           Mostrar esta ayuda
+
+  Las credenciales se guardan directamente en el config de cada
+  cliente MCP (env block). No se crea ninguna carpeta externa.
+  `);
+}
+
+// ─── Helpers ───
 
 function ask(rl, question) {
   return new Promise(resolve => rl.question(question, resolve));
@@ -22,34 +63,31 @@ function ask(rl, question) {
 function printBanner() {
   console.log('');
   console.log('  ╔══════════════════════════════════════════╗');
-  console.log('  ║       Planning MCP - Setup Wizard        ║');
+  console.log('  ║   Planning Task MCP - Instalador         ║');
   console.log('  ╚══════════════════════════════════════════╝');
   console.log('');
-  console.log('  Este script configura todo lo necesario para');
-  console.log('  que el servidor MCP funcione con tu Firebase.');
-  console.log('');
-  console.log(`  Config dir: ${CONFIG_DIR}`);
+  console.log('  Configura el MCP en todos tus clientes.');
+  console.log('  No arranca ningún servidor, solo configura.');
   console.log('');
 }
 
-function printStep(num, total, title) {
-  console.log(`\n  ── Paso ${num}/${total}: ${title} ──\n`);
+function printStep(num, title) {
+  console.log(`\n  ── Paso ${num}/${TOTAL_STEPS}: ${title} ──\n`);
 }
 
 function ensureDependencies() {
-  const nodeModulesPath = join(PROJECT_ROOT, 'node_modules');
-  const sdkPath = join(nodeModulesPath, '@modelcontextprotocol', 'sdk');
-  const firebasePath = join(nodeModulesPath, 'firebase-admin');
+  const sdkPath = join(PROJECT_ROOT, 'node_modules', '@modelcontextprotocol', 'sdk');
+  const firebasePath = join(PROJECT_ROOT, 'node_modules', 'firebase-admin');
 
   if (existsSync(sdkPath) && existsSync(firebasePath)) {
-    console.log('  ✓ Dependencias ya instaladas\n');
+    console.log('  ✓ Dependencias ya instaladas');
     return;
   }
 
   console.log('  Instalando dependencias (npm install)...');
   try {
     execSync('npm install', { cwd: PROJECT_ROOT, stdio: 'pipe' });
-    console.log('  ✓ Dependencias instaladas correctamente\n');
+    console.log('  ✓ Dependencias instaladas correctamente');
   } catch (err) {
     console.error(`  ✗ ERROR al instalar dependencias: ${err.message}`);
     console.error('  Intenta manualmente: cd ' + PROJECT_ROOT + ' && npm install');
@@ -57,304 +95,8 @@ function ensureDependencies() {
   }
 }
 
-async function setup() {
-  printBanner();
-
-  // ═══ STEP 0: Ensure node_modules ═══
-  printStep(0, 6, 'Verificar dependencias de Node');
-  ensureDependencies();
-
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
-    console.log(`  ✓ Directorio creado: ${CONFIG_DIR}\n`);
-  }
-
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const currentEnv = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf-8') : '';
-
-  try {
-    // ═══ STEP 1: Service Account Key ═══
-    printStep(1, 6, 'Service Account Key de Firebase');
-    console.log('  Descárgalo desde:');
-    console.log('  Firebase Console → Configuración del proyecto');
-    console.log('  → Cuentas de servicio → Generar nueva clave privada\n');
-
-    if (existsSync(SA_KEY_PATH)) {
-      console.log(`  ⚡ Ya existe: ${SA_KEY_PATH}`);
-      const overwrite = await ask(rl, '  ¿Sobreescribir? (s/N): ');
-      if (overwrite.toLowerCase() === 's') {
-        await promptServiceAccountKey(rl);
-      } else {
-        console.log('  → Se mantiene el existente.');
-      }
-    } else {
-      await promptServiceAccountKey(rl);
-    }
-
-    // Try to auto-detect databaseURL from service account
-    let autoDbUrl = '';
-    if (existsSync(SA_KEY_PATH)) {
-      try {
-        const sa = JSON.parse(readFileSync(SA_KEY_PATH, 'utf-8'));
-        if (sa.project_id) {
-          // Common RTDB URL patterns
-          autoDbUrl = `https://${sa.project_id}-default-rtdb.europe-west1.firebasedatabase.app`;
-        }
-      } catch { /* */ }
-    }
-
-    // ═══ STEP 2: Database URL ═══
-    printStep(2, 6, 'URL de Realtime Database');
-    console.log('  Encuéntrala en:');
-    console.log('  Firebase Console → Realtime Database → URL en la parte superior\n');
-
-    const currentDbUrl = currentEnv.match(/FIREBASE_DATABASE_URL=(.+)/)?.[1] || '';
-    const suggestedUrl = currentDbUrl || autoDbUrl;
-
-    let dbUrl;
-    if (suggestedUrl) {
-      console.log(`  Detectada: ${suggestedUrl}`);
-      dbUrl = await ask(rl, '  Pulsa Enter para usar esta, o escribe otra:\n  > ');
-    } else {
-      dbUrl = await ask(rl, '  URL:\n  > ');
-    }
-
-    const finalDbUrl = dbUrl.trim() || suggestedUrl;
-    if (!finalDbUrl) {
-      console.error('\n  ✗ ERROR: Se requiere la URL de la base de datos.');
-      process.exit(1);
-    }
-    console.log(`  ✓ Database URL: ${finalDbUrl}`);
-
-    // ═══ STEP 3: User ID ═══
-    printStep(3, 6, 'Tu UID de Firebase Auth');
-    console.log('  Encuéntralo en:');
-    console.log('  Firebase Console → Authentication → Users → columna "UID"\n');
-
-    const currentUserId = currentEnv.match(/DEFAULT_USER_ID=(.+)/)?.[1] || '';
-    const userId = await ask(
-      rl,
-      `  UID${currentUserId ? ` (actual: ${currentUserId}, Enter para mantener)` : ''}:\n  > `
-    );
-    const finalUserId = userId.trim() || currentUserId;
-    if (finalUserId) console.log(`  ✓ User ID: ${finalUserId}`);
-
-    // ═══ STEP 4: User Name ═══
-    printStep(4, 6, 'Tu nombre de usuario');
-
-    const currentUserName = currentEnv.match(/DEFAULT_USER_NAME=(.+)/)?.[1] || '';
-    const userName = await ask(
-      rl,
-      `  Nombre${currentUserName ? ` (actual: ${currentUserName}, Enter para mantener)` : ''}:\n  > `
-    );
-    const finalUserName = userName.trim() || currentUserName;
-    if (finalUserName) console.log(`  ✓ User Name: ${finalUserName}`);
-
-    // Write .env
-    const envContent = [
-      `FIREBASE_DATABASE_URL=${finalDbUrl}`,
-      `DEFAULT_USER_ID=${finalUserId}`,
-      `DEFAULT_USER_NAME=${finalUserName}`,
-    ].join('\n') + '\n';
-
-    writeFileSync(ENV_PATH, envContent);
-
-    // ═══ STEP 5: Configure MCP in clients ═══
-    printStep(5, 6, 'Registrar MCP en clientes');
-
-    const indexPath = join(PROJECT_ROOT, 'src', 'index.js').replace(/\\/g, '/');
-    const mcpServerEntry = {
-      "command": "node",
-      "args": [indexPath]
-    };
-
-    // Define all known MCP client config locations
-    const isWin = process.platform === 'win32';
-    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
-
-    const clients = [
-      {
-        name: 'Claude Code',
-        path: join(homedir(), '.mcp.json'),
-        format: 'mcpServers',  // { mcpServers: { "name": { command, args } } }
-      },
-      {
-        name: 'Claude Desktop',
-        path: isWin
-          ? join(appData, 'Claude', 'claude_desktop_config.json')
-          : join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
-        format: 'mcpServers',
-      },
-      {
-        name: 'Cursor',
-        path: join(homedir(), '.cursor', 'mcp.json'),
-        format: 'mcpServers',
-      },
-      {
-        name: 'Windsurf',
-        path: join(homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
-        format: 'mcpServers',
-      },
-      {
-        name: 'VS Code (Copilot)',
-        path: join(homedir(), '.vscode', 'mcp.json'),
-        format: 'servers',  // { servers: { "name": { command, args } } }
-      },
-    ];
-
-    console.log('  Clientes MCP detectados:\n');
-
-    const configuredClients = [];
-    for (const client of clients) {
-      const exists = existsSync(client.path);
-      const dirExists = existsSync(dirname(client.path));
-      const marker = exists ? '(config existente)' : dirExists ? '(directorio existe)' : '(no encontrado)';
-      console.log(`  ${exists || dirExists ? '●' : '○'} ${client.name} ${marker}`);
-      console.log(`    ${client.path}`);
-    }
-
-    console.log('');
-    const configureAll = await ask(
-      rl,
-      '  ¿Registrar planning-mcp en todos los clientes encontrados? (S/n): '
-    );
-
-    if (configureAll.toLowerCase() !== 'n') {
-      for (const client of clients) {
-        const dirPath = dirname(client.path);
-        if (!existsSync(dirPath)) {
-          // Only create dir if the client's parent dir is known to exist
-          // (avoid creating dirs for uninstalled apps)
-          const parentExists = existsSync(dirname(dirPath));
-          if (!parentExists) {
-            console.log(`  ⊘ ${client.name} - no instalado, omitido`);
-            continue;
-          }
-          mkdirSync(dirPath, { recursive: true });
-        }
-
-        let existing = {};
-        if (existsSync(client.path)) {
-          try {
-            existing = JSON.parse(readFileSync(client.path, 'utf-8'));
-          } catch { /* */ }
-        }
-
-        const key = client.format; // 'mcpServers' or 'servers'
-        const merged = {
-          ...existing,
-          [key]: {
-            ...(existing[key] || {}),
-            'planning-mcp': mcpServerEntry,
-          },
-        };
-
-        writeFileSync(client.path, JSON.stringify(merged, null, 2) + '\n');
-        console.log(`  ✓ ${client.name} configurado`);
-        configuredClients.push(client.name);
-      }
-    } else {
-      console.log('\n  Para configurar manualmente, añade esto a tu config MCP:');
-      console.log(JSON.stringify({ mcpServers: { 'planning-mcp': mcpServerEntry } }, null, 2));
-    }
-
-    // ═══ STEP 6: VERIFICATION ═══
-    printStep(6, 6, 'Verificación completa');
-
-    const nodeModulesOk = existsSync(join(PROJECT_ROOT, 'node_modules', '@modelcontextprotocol', 'sdk'));
-    const saKeyOk = existsSync(SA_KEY_PATH);
-    const envOk = existsSync(ENV_PATH);
-    const dbUrlOk = Boolean(finalDbUrl);
-    const userIdOk = Boolean(finalUserId);
-    const userNameOk = Boolean(finalUserName);
-
-    // Validate serviceAccountKey structure
-    let saKeyValid = false;
-    if (saKeyOk) {
-      try {
-        const sa = JSON.parse(readFileSync(SA_KEY_PATH, 'utf-8'));
-        saKeyValid = sa.type === 'service_account' && Boolean(sa.private_key) && Boolean(sa.project_id);
-      } catch { /* */ }
-    }
-
-    console.log('  ╔══════════════════════════════════════════╗');
-    console.log('  ║            Setup Completado               ║');
-    console.log('  ╚══════════════════════════════════════════╝\n');
-    console.log(`  node_modules            ${nodeModulesOk ? '✓' : '✗'}  ${nodeModulesOk ? 'SDK + Firebase instalados' : 'FALTAN dependencias'}`);
-    console.log(`  serviceAccountKey.json  ${saKeyValid ? '✓' : saKeyOk ? '⚠ estructura inválida' : '✗'}`);
-    console.log(`  .env                    ${envOk ? '✓' : '✗'}`);
-    console.log(`  Database URL            ${dbUrlOk ? '✓' : '✗'}  ${finalDbUrl || '(vacío)'}`);
-    console.log(`  User ID                 ${userIdOk ? '✓' : '⚠'}  ${finalUserId || '(no configurado)'}`);
-    console.log(`  User Name               ${userNameOk ? '✓' : '⚠'}  ${finalUserName || '(no configurado)'}`);
-    if (configuredClients.length > 0) {
-      console.log(`  Clientes MCP            ✓  ${configuredClients.join(', ')}`);
-    }
-
-    // Check for critical failures
-    const critical = [];
-    if (!nodeModulesOk) critical.push('npm install');
-    if (!saKeyValid) critical.push('serviceAccountKey.json');
-    if (!dbUrlOk) critical.push('FIREBASE_DATABASE_URL');
-
-    if (critical.length > 0) {
-      console.log(`\n  ✗ ERRORES CRITICOS: Faltan ${critical.join(', ')}`);
-      console.log('  El servidor NO podrá arrancar hasta que se resuelvan.\n');
-      process.exit(1);
-    }
-
-    // Test connection
-    console.log('\n  Probando conexión a Firebase...');
-    try {
-      const { getDb } = await import('./firebase.js');
-      const db = getDb();
-      const snap = await db.ref('users').limitToFirst(1).once('value');
-      if (snap.exists()) {
-        console.log('  ✓ Conexión exitosa. Firebase responde correctamente.\n');
-      } else {
-        console.log('  ⚠ Conexión OK pero no hay datos en /users. ¿La base de datos tiene datos?\n');
-      }
-    } catch (err) {
-      console.log(`  ✗ Error de conexión: ${err.message}`);
-      console.log('  Verifica que la URL y el serviceAccountKey sean correctos.\n');
-    }
-
-    // Test server can actually start (quick smoke test)
-    console.log('  Verificando que el servidor MCP arranca...');
-    try {
-      const indexPath = join(PROJECT_ROOT, 'src', 'index.js');
-      // Import the config validation only (don't start the full server)
-      const { validateConfig } = await import('./config.js');
-      const configErrors = validateConfig();
-      if (configErrors.length === 0) {
-        console.log('  ✓ Configuración válida. El servidor está listo para arrancar.\n');
-      } else {
-        console.log('  ✗ Errores de configuración:');
-        configErrors.forEach(e => console.log(`    - ${e}`));
-        console.log('');
-      }
-    } catch (err) {
-      console.log(`  ✗ Error al verificar servidor: ${err.message}\n`);
-    }
-
-    console.log('  ─────────────────────────────────────────');
-    console.log('  Abre cualquier cliente MCP y pídele:');
-    console.log('    "Lista mis proyectos"');
-    console.log('    "Crea un sprint para el proyecto X"');
-    console.log('    "Planifica este documento: [pega tu texto]"');
-    console.log('  ─────────────────────────────────────────\n');
-
-  } finally {
-    rl.close();
-  }
-}
-
-async function promptServiceAccountKey(rl) {
-  const saPath = await ask(
-    rl,
-    '  Ruta al archivo serviceAccountKey.json (arrastra el archivo aquí):\n  > '
-  );
-
-  const trimmed = saPath.trim().replace(/^["']|["']$/g, '');
+function validateServiceAccountKey(filePath) {
+  const trimmed = filePath.trim().replace(/^["']|["']$/g, '');
   if (!trimmed) {
     console.error('  ✗ ERROR: Se requiere el archivo serviceAccountKey.json');
     process.exit(1);
@@ -365,7 +107,6 @@ async function promptServiceAccountKey(rl) {
     process.exit(1);
   }
 
-  // Validate JSON and check it's a service account
   try {
     const parsed = JSON.parse(readFileSync(trimmed, 'utf-8'));
     if (parsed.type !== 'service_account') {
@@ -373,13 +114,394 @@ async function promptServiceAccountKey(rl) {
       process.exit(1);
     }
     console.log(`  ✓ Service Account Key válida (proyecto: ${parsed.project_id})`);
+    return { path: resolve(trimmed), projectId: parsed.project_id };
   } catch {
     console.error('  ✗ ERROR: El archivo no es JSON válido.');
     process.exit(1);
   }
+}
 
-  copyFileSync(trimmed, SA_KEY_PATH);
-  console.log(`  ✓ Copiado a ${CONFIG_DIR}`);
+function autoDetectDbUrl(projectId) {
+  if (!projectId) return '';
+  return `https://${projectId}-default-rtdb.europe-west1.firebasedatabase.app`;
+}
+
+function getMcpClients() {
+  const isWin = process.platform === 'win32';
+  const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
+
+  return [
+    {
+      name: 'Claude Code',
+      path: join(homedir(), '.mcp.json'),
+      format: 'mcpServers',
+    },
+    {
+      name: 'Claude Desktop',
+      path: isWin
+        ? join(appData, 'Claude', 'claude_desktop_config.json')
+        : join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+      format: 'mcpServers',
+    },
+    {
+      name: 'Cursor',
+      path: join(homedir(), '.cursor', 'mcp.json'),
+      format: 'mcpServers',
+    },
+    {
+      name: 'Windsurf',
+      path: join(homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
+      format: 'mcpServers',
+    },
+    {
+      name: 'VS Code (Copilot)',
+      path: join(homedir(), '.vscode', 'mcp.json'),
+      format: 'servers',
+    },
+    {
+      name: 'Gemini CLI',
+      path: join(homedir(), '.gemini', 'settings.json'),
+      format: 'mcpServers',
+    },
+    {
+      name: 'Codex (OpenAI)',
+      path: join(homedir(), '.codex', 'config.toml'),
+      format: 'toml',
+    },
+  ];
+}
+
+function buildTomlBlock(envVars) {
+  const indexPath = join(PROJECT_ROOT, 'src', 'index.js').replace(/\\/g, '/');
+  const argsStr = `["${indexPath}"]`;
+  let block = `[mcp_servers.planning-task-mcp]\ncommand = "node"\nargs = ${argsStr}\n`;
+  block += `\n[mcp_servers.planning-task-mcp.env]\n`;
+  for (const [k, v] of Object.entries(envVars)) {
+    block += `${k} = "${v}"\n`;
+  }
+  return block;
+}
+
+function registerInClients(envVars) {
+  const indexPath = join(PROJECT_ROOT, 'src', 'index.js').replace(/\\/g, '/');
+  const mcpServerEntry = {
+    command: 'node',
+    args: [indexPath],
+    env: envVars,
+  };
+
+  const clients = getMcpClients();
+  const configured = [];
+
+  for (const client of clients) {
+    const dirPath = dirname(client.path);
+    if (!existsSync(dirPath)) {
+      if (!existsSync(dirname(dirPath))) {
+        console.log(`  ⊘ ${client.name} - no instalado, omitido`);
+        continue;
+      }
+      mkdirSync(dirPath, { recursive: true });
+    }
+
+    if (client.format === 'toml') {
+      // Codex uses TOML format
+      let existing = existsSync(client.path) ? readFileSync(client.path, 'utf-8') : '';
+      // Remove old planning-mcp and planning-task-mcp blocks if present
+      existing = existing.replace(/\[mcp_servers\.planning-mcp\][\s\S]*?(?=\[|$)/g, '');
+      existing = existing.replace(/\[mcp_servers\.planning-task-mcp\][\s\S]*?(?=\[|$)/g, '');
+      const tomlBlock = buildTomlBlock(envVars);
+      writeFileSync(client.path, existing.trimEnd() + '\n\n' + tomlBlock);
+    } else {
+      // JSON format (Claude, Cursor, Windsurf, VS Code, Gemini)
+      let existing = {};
+      if (existsSync(client.path)) {
+        try { existing = JSON.parse(readFileSync(client.path, 'utf-8')); } catch { /* */ }
+      }
+
+      const key = client.format;
+      const entries = { ...(existing[key] || {}) };
+      delete entries['planning-mcp']; // limpiar nombre viejo
+      const merged = {
+        ...existing,
+        [key]: { ...entries, 'planning-task-mcp': mcpServerEntry },
+      };
+
+      writeFileSync(client.path, JSON.stringify(merged, null, 2) + '\n');
+    }
+
+    console.log(`  ✓ ${client.name}`);
+    configured.push(client.name);
+  }
+
+  return configured;
+}
+
+function configureAutoPermissions() {
+  const MCP_PERMISSION = 'mcp__planning-task-mcp__*';
+  const configured = [];
+
+  // Claude Code: ~/.claude/settings.json → permissions.allow
+  const claudeCodeSettings = join(homedir(), '.claude', 'settings.json');
+  if (existsSync(join(homedir(), '.claude'))) {
+    let settings = {};
+    if (existsSync(claudeCodeSettings)) {
+      try { settings = JSON.parse(readFileSync(claudeCodeSettings, 'utf-8')); } catch { /* */ }
+    }
+    if (!settings.permissions) settings.permissions = {};
+    if (!Array.isArray(settings.permissions.allow)) settings.permissions.allow = [];
+    settings.permissions.allow = settings.permissions.allow.filter(
+      p => p !== 'mcp__planning-mcp__*'
+    );
+    if (!settings.permissions.allow.includes(MCP_PERMISSION)) {
+      settings.permissions.allow.push(MCP_PERMISSION);
+    }
+    writeFileSync(claudeCodeSettings, JSON.stringify(settings, null, 2) + '\n');
+    console.log('  ✓ Claude Code - permissions.allow');
+    configured.push('Claude Code');
+  }
+
+  // Cursor: autoApprove in mcp.json
+  addAutoApproveToJsonConfig(
+    join(homedir(), '.cursor', 'mcp.json'), 'mcpServers', 'Cursor', configured
+  );
+
+  // Windsurf: autoApprove in mcp_config.json
+  addAutoApproveToJsonConfig(
+    join(homedir(), '.codeium', 'windsurf', 'mcp_config.json'), 'mcpServers', 'Windsurf', configured
+  );
+
+  // Gemini CLI: trust: true in settings.json
+  const geminiSettings = join(homedir(), '.gemini', 'settings.json');
+  if (existsSync(geminiSettings)) {
+    try {
+      const config = JSON.parse(readFileSync(geminiSettings, 'utf-8'));
+      const entry = config?.mcpServers?.['planning-task-mcp'];
+      if (entry) {
+        if (!entry.trust) {
+          entry.trust = true;
+          writeFileSync(geminiSettings, JSON.stringify(config, null, 2) + '\n');
+          console.log('  ✓ Gemini CLI - trust: true');
+        } else {
+          console.log('  ✓ Gemini CLI - ya configurado');
+        }
+        configured.push('Gemini CLI');
+      }
+    } catch { /* */ }
+  }
+
+  // VS Code (Copilot): chat.tools.autoApprove in settings.json
+  const vscodeDirs = [
+    join(homedir(), '.vscode'),
+    join(homedir(), 'AppData', 'Roaming', 'Code', 'User'),
+  ];
+  for (const dir of vscodeDirs) {
+    const settingsPath = join(dir, 'settings.json');
+    if (existsSync(settingsPath)) {
+      try {
+        let vsSettings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+        if (vsSettings['chat.tools.autoApprove'] !== true) {
+          vsSettings['chat.tools.autoApprove'] = true;
+          writeFileSync(settingsPath, JSON.stringify(vsSettings, null, 2) + '\n');
+          console.log('  ✓ VS Code - chat.tools.autoApprove');
+        } else {
+          console.log('  ✓ VS Code - ya configurado');
+        }
+        configured.push('VS Code');
+      } catch { /* */ }
+      break;
+    }
+  }
+
+  // Codex (OpenAI): no per-server auto-approve, only global approval_policy
+  const codexConfig = join(homedir(), '.codex', 'config.toml');
+  if (existsSync(codexConfig)) {
+    console.log('  ⚠ Codex - no soporta auto-approve por servidor');
+    console.log('    Para auto-aprobar: añade approval_policy = "never" en ~/.codex/config.toml');
+  }
+
+  // Claude Desktop: no file-based permission system (UI only)
+
+  if (configured.length === 0) {
+    console.log('  ⚠ No se encontraron CLIs con sistema de permisos configurable');
+  }
+
+  return configured;
+}
+
+function addAutoApproveToJsonConfig(filePath, serverKey, clientName, configured) {
+  if (!existsSync(filePath)) return;
+  try {
+    const config = JSON.parse(readFileSync(filePath, 'utf-8'));
+    const entry = config?.[serverKey]?.['planning-task-mcp'];
+    if (entry) {
+      if (!entry.autoApprove) {
+        entry.autoApprove = ['*'];
+        writeFileSync(filePath, JSON.stringify(config, null, 2) + '\n');
+        console.log(`  ✓ ${clientName} - autoApprove: ["*"]`);
+      } else {
+        console.log(`  ✓ ${clientName} - ya configurado`);
+      }
+      configured.push(clientName);
+    }
+  } catch { /* */ }
+}
+
+// ─── Main setup ───
+
+async function setup() {
+  const cliArgs = parseArgs();
+  const hasCLIArgs = cliArgs.saKey || cliArgs.dbUrl || cliArgs.userId;
+
+  printBanner();
+
+  // ═══ STEP 1: Dependencies ═══
+  printStep(1, 'Verificar dependencias');
+  ensureDependencies();
+
+  // ═══ STEP 2: Service Account Key ═══
+  printStep(2, 'Service Account Key de Firebase');
+
+  const defaultSaKeyPath = join(PROJECT_ROOT, 'serviceAccountKey.json');
+  let saInfo;
+
+  if (cliArgs.saKey) {
+    // CLI arg provided
+    saInfo = validateServiceAccountKey(cliArgs.saKey);
+  } else if (existsSync(defaultSaKeyPath)) {
+    // Auto-detected in project root
+    console.log(`  ⚡ Detectada en la raíz del proyecto`);
+    saInfo = validateServiceAccountKey(defaultSaKeyPath);
+  } else {
+    // Ask interactively
+    console.log('  No se encontró serviceAccountKey.json en el proyecto.');
+    console.log('  Descárgalo desde:');
+    console.log('  Firebase Console → Configuración del proyecto');
+    console.log('  → Cuentas de servicio → Generar nueva clave privada\n');
+    console.log('  Opciones:');
+    console.log('  1. Copia el archivo a la raíz del proyecto como serviceAccountKey.json');
+    console.log('  2. O arrastra el archivo aquí para indicar la ruta\n');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const path = await ask(rl, '  Ruta al archivo:\n  > ');
+    saInfo = validateServiceAccountKey(path);
+    rl.close();
+  }
+
+  // Normalize path with forward slashes for cross-platform compat
+  const saKeyPath = saInfo.path.replace(/\\/g, '/');
+
+  // ═══ STEP 3: Firebase config ═══
+  printStep(3, 'Configuración de Firebase');
+
+  const autoUrl = autoDetectDbUrl(saInfo.projectId);
+  let finalDbUrl, finalUserId, finalUserName;
+
+  if (!hasCLIArgs) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    if (autoUrl) {
+      console.log(`  DB URL detectada: ${autoUrl}`);
+      const input = await ask(rl, '  Pulsa Enter para usar esta, o escribe otra:\n  > ');
+      finalDbUrl = input.trim() || autoUrl;
+    } else {
+      console.log('  Encuéntrala en: Firebase Console → Realtime Database\n');
+      finalDbUrl = (await ask(rl, '  URL:\n  > ')).trim();
+    }
+
+    finalUserId = (await ask(rl, '  UID de Firebase Auth:\n  > ')).trim();
+    finalUserName = (await ask(rl, '  Tu nombre:\n  > ')).trim();
+
+    rl.close();
+  } else {
+    finalDbUrl = cliArgs.dbUrl || autoUrl;
+    finalUserId = cliArgs.userId || '';
+    finalUserName = cliArgs.userName || '';
+  }
+
+  if (!finalDbUrl) {
+    console.error('\n  ✗ ERROR: Se requiere FIREBASE_DATABASE_URL (usa --db-url <url>)');
+    process.exit(1);
+  }
+
+  console.log(`  ✓ Database URL: ${finalDbUrl}`);
+  if (finalUserId) console.log(`  ✓ User ID: ${finalUserId}`);
+  if (finalUserName) console.log(`  ✓ User Name: ${finalUserName}`);
+
+  // Build env vars block (standard MCP approach)
+  const envVars = {
+    GOOGLE_APPLICATION_CREDENTIALS: saKeyPath,
+    FIREBASE_DATABASE_URL: finalDbUrl,
+  };
+  if (finalUserId) envVars.DEFAULT_USER_ID = finalUserId;
+  if (finalUserName) envVars.DEFAULT_USER_NAME = finalUserName;
+
+  // ═══ STEP 4: Register MCP in clients ═══
+  printStep(4, 'Registrar en clientes MCP');
+
+  let configuredClients = [];
+  if (cliArgs.noRegister) {
+    console.log('  → Omitido (--no-register)');
+  } else if (!hasCLIArgs) {
+    const clients = getMcpClients();
+    console.log('  Clientes detectados:\n');
+    for (const c of clients) {
+      const exists = existsSync(c.path);
+      const dirExists = existsSync(dirname(c.path));
+      const marker = exists ? '(config existente)' : dirExists ? '(dir existe)' : '(no encontrado)';
+      console.log(`  ${exists || dirExists ? '●' : '○'} ${c.name} ${marker}`);
+    }
+    console.log('');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const confirm = await ask(rl, '  ¿Registrar en todos los clientes encontrados? (S/n): ');
+    rl.close();
+    if (confirm.toLowerCase() !== 'n') {
+      configuredClients = registerInClients(envVars);
+    }
+  } else {
+    configuredClients = registerInClients(envVars);
+  }
+
+  // ═══ STEP 5: Auto-approve permissions ═══
+  printStep(5, 'Configurar permisos automáticos');
+
+  const permissionClients = configureAutoPermissions();
+
+  // ═══ STEP 6: Verification ═══
+  printStep(6, 'Verificación');
+
+  const depsOk = existsSync(join(PROJECT_ROOT, 'node_modules', '@modelcontextprotocol', 'sdk'));
+  const saKeyOk = existsSync(saInfo.path);
+
+  console.log('  ╔══════════════════════════════════════════╗');
+  console.log('  ║         Instalación completada            ║');
+  console.log('  ╚══════════════════════════════════════════╝\n');
+  console.log(`  Dependencias          ${depsOk ? '✓' : '✗'}  ${depsOk ? 'OK' : 'FALTAN'}`);
+  console.log(`  Service Account Key   ${saKeyOk ? '✓' : '✗'}  ${saKeyPath}`);
+  console.log(`  Database URL          ${finalDbUrl ? '✓' : '✗'}  ${finalDbUrl}`);
+  console.log(`  User ID               ${finalUserId ? '✓' : '⚠'}  ${finalUserId || '(no configurado)'}`);
+  console.log(`  User Name             ${finalUserName ? '✓' : '⚠'}  ${finalUserName || '(no configurado)'}`);
+  if (configuredClients.length > 0) {
+    console.log(`  Clientes MCP          ✓  ${configuredClients.join(', ')}`);
+  }
+  if (permissionClients.length > 0) {
+    console.log(`  Permisos auto         ✓  ${permissionClients.join(', ')}`);
+  }
+
+  const critical = [];
+  if (!depsOk) critical.push('dependencias');
+  if (!saKeyOk) critical.push('serviceAccountKey.json');
+  if (!finalDbUrl) critical.push('FIREBASE_DATABASE_URL');
+
+  if (critical.length > 0) {
+    console.log(`\n  ✗ ERRORES: Faltan ${critical.join(', ')}`);
+    process.exit(1);
+  }
+
+  console.log('\n  Las credenciales se guardan en el config de cada cliente');
+  console.log('  (env block estándar MCP). No se crea ninguna carpeta extra.');
+  console.log('');
+  console.log('  Reinicia tu terminal/IDE y prueba:');
+  console.log('    "Lista mis proyectos"');
+  console.log('');
 }
 
 setup().catch(err => {
