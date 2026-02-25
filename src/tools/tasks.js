@@ -61,6 +61,7 @@ export const taskTools = {
     inputSchema: {
       type: 'object',
       properties: {
+        id: { type: 'string', description: 'ID de la tarea' },
         projectId: { type: 'string', description: 'ID del proyecto al que pertenece' },
         title: { type: 'string', description: 'Título de la tarea (3-200 caracteres)' },
         userStory: {
@@ -99,6 +100,19 @@ export const taskTools = {
             outOfScope: { type: 'string', description: 'Elementos fuera del alcance de esta tarea' },
           },
         },
+        tests: {
+          type: 'array',
+          description: 'Tests obligatorios de la tarea. Mínimo 1 test requerido. Se validan al cambiar estado: para pasar a to-validate todos deben estar definidos, para validated/done todos deben estar passed.',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'Descripción del test' },
+              type: { type: 'string', enum: ['unit', 'integration', 'e2e', 'manual'], description: 'Tipo de test' },
+              status: { type: 'string', enum: ['pending', 'passed', 'failed'], description: 'Estado del test. Default: pending' },
+            },
+            required: ['description'],
+          },
+        },
         attachments: {
           type: 'array',
           description: 'Archivos adjuntos (opcional). Cada adjunto necesita id, name, url, storagePath, uploadedAt, uploadedBy.',
@@ -118,9 +132,9 @@ export const taskTools = {
         userId: { type: 'string', description: 'UID del creador. Si no se pasa, usa el default.' },
         userName: { type: 'string', description: 'Nombre del creador.' },
       },
-      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints'],
+      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests'],
     },
-    handler: async ({ projectId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, attachments, userId, userName }) => {
+    handler: async ({ projectId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, userId, userName }) => {
       const uid = userId || config.defaultUserId;
       const uname = userName || config.defaultUserName;
 
@@ -133,6 +147,10 @@ export const taskTools = {
 
       if (!acceptanceCriteria || acceptanceCriteria.length === 0) {
         return { error: 'Se requiere al menos un criterio de aceptación' };
+      }
+
+      if (!tests || tests.length === 0) {
+        return { error: 'Se requiere al menos un test. Define tests con description y tipo (unit/integration/e2e/manual).' };
       }
 
       const now = Date.now();
@@ -161,6 +179,11 @@ export const taskTools = {
           risks: implementationPlan.risks || '',
           outOfScope: implementationPlan.outOfScope || '',
         } : null,
+        tests: tests.map(t => ({
+          description: t.description,
+          type: t.type || 'unit',
+          status: t.status || 'pending',
+        })),
         attachments: attachments || [],
         createdAt: now,
         updatedAt: now,
@@ -240,6 +263,19 @@ export const taskTools = {
             apiChanges: { type: 'string' },
             risks: { type: 'string' },
             outOfScope: { type: 'string' },
+          },
+        },
+        tests: {
+          type: 'array',
+          description: 'Tests de la tarea (reemplaza los existentes). Mínimo 1 requerido.',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'Descripción del test' },
+              type: { type: 'string', enum: ['unit', 'integration', 'e2e', 'manual'], description: 'Tipo de test' },
+              status: { type: 'string', enum: ['pending', 'passed', 'failed'], description: 'Estado del test' },
+            },
+            required: ['description'],
           },
         },
         attachments: {
@@ -400,6 +436,24 @@ export const taskTools = {
       if (!task) return { error: `Tarea ${taskId} no encontrada` };
 
       if (task.status === newStatus) return { message: `La tarea ya está en estado "${newStatus}"` };
+
+      // Validate tests before status transitions
+      const tests = task.tests || [];
+      if (['to-validate', 'validated', 'done'].includes(newStatus)) {
+        if (tests.length === 0) {
+          return { error: `No se puede pasar a "${newStatus}": la tarea no tiene tests definidos. Añade al menos un test con update_task.` };
+        }
+      }
+      if (['validated', 'done'].includes(newStatus)) {
+        const failed = tests.filter(t => t.status === 'failed');
+        const pending = tests.filter(t => t.status === 'pending');
+        if (failed.length > 0) {
+          return { error: `No se puede pasar a "${newStatus}": hay ${failed.length} test(s) fallidos. Corrígelos primero.` };
+        }
+        if (pending.length > 0) {
+          return { error: `No se puede pasar a "${newStatus}": hay ${pending.length} test(s) pendientes. Ejecútalos y actualiza su estado.` };
+        }
+      }
 
       const uid = userId || config.defaultUserId;
       const uname = userName || config.defaultUserName;

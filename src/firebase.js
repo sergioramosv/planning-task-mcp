@@ -20,6 +20,19 @@ export function getDb() {
   return db;
 }
 
+// Strip undefined/null values recursively before writing to Firebase
+function sanitize(obj) {
+  if (Array.isArray(obj)) return obj.map(sanitize).filter(v => v !== undefined);
+  if (obj !== null && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => [k, sanitize(v)])
+    );
+  }
+  return obj;
+}
+
 // --- Generic helpers ---
 
 export async function getAll(path) {
@@ -46,12 +59,12 @@ export async function getFiltered(path, field, value) {
 export async function create(path, data) {
   const ref = getDb().ref(path).push();
   const id = ref.key;
-  await ref.set({ ...data });
+  await ref.set(sanitize({ ...data, id }));
   return id;
 }
 
 export async function update(path, id, data) {
-  await getDb().ref(`${path}/${id}`).update(data);
+  await getDb().ref(`${path}/${id}`).update(sanitize(data));
 }
 
 export async function remove(path, id) {
