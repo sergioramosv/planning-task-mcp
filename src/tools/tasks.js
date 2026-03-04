@@ -469,6 +469,23 @@ export const taskTools = {
         }
       }
 
+      // Cross-check: when both blockedBy and blocks are updated simultaneously
+      if (clean.blockedBy && clean.blockedBy.length > 0 && clean.blocks && clean.blocks.length > 0) {
+        // Direct overlap: a task can't both block and be blocked by the same task
+        const overlap = clean.blockedBy.filter(id => clean.blocks.includes(id));
+        if (overlap.length > 0) {
+          return { error: `Dependencia circular detectada: las tareas ${overlap.join(', ')} están en blockedBy y blocks simultáneamente` };
+        }
+        // Transitive: check if any task in blocks is transitively blocked by a task in blockedBy
+        for (const blockedId of clean.blocks) {
+          for (const blockerId of clean.blockedBy) {
+            if (await hasCircularDependency(blockedId, blockerId)) {
+              return { error: `Dependencia circular detectada: ${blockedId} (en blocks) ya depende transitivamente de ${blockerId} (en blockedBy)` };
+            }
+          }
+        }
+      }
+
       // Validate parentTaskId if being set
       if (clean.parentTaskId) {
         const parentTask = await getById(PATH, clean.parentTaskId);
