@@ -11,6 +11,38 @@ function calculatePriority(bizPoints, devPoints) {
 const VALID_STATUSES = ['to-do', 'in-progress', 'to-validate', 'validated', 'done'];
 const FIBONACCI = [1, 2, 3, 5, 8, 13];
 
+/**
+ * Detects circular dependencies in blockedBy/blocks graph.
+ * Returns true if adding a dependency from `fromId` blocked by `toId` would create a cycle.
+ */
+async function hasCircularDependency(fromId, toId, visited = new Set()) {
+  if (fromId === toId) return true;
+  if (visited.has(toId)) return false;
+  visited.add(toId);
+
+  const task = await getById(PATH, toId);
+  if (!task) return false;
+
+  const blockedBy = task.blockedBy || [];
+  for (const depId of blockedBy) {
+    if (await hasCircularDependency(fromId, depId, visited)) return true;
+  }
+  return false;
+}
+
+/**
+ * Validates that all IDs in an array exist as tasks in the given project.
+ * Returns { valid: true } or { valid: false, missing: [...] }
+ */
+async function validateTaskIds(ids, projectId) {
+  const missing = [];
+  for (const id of ids) {
+    const task = await getById(PATH, id);
+    if (!task || task.projectId !== projectId) missing.push(id);
+  }
+  return missing.length === 0 ? { valid: true } : { valid: false, missing };
+}
+
 export const taskTools = {
   list_tasks: {
     description: 'Lista tareas con filtros opcionales por proyecto, sprint, estado, desarrollador o texto de búsqueda. Las tareas se devuelven ordenadas por prioridad (mayor primero).',
@@ -129,12 +161,15 @@ export const taskTools = {
             required: ['id', 'name', 'url', 'storagePath', 'uploadedAt', 'uploadedBy'],
           },
         },
+        parentTaskId: { type: 'string', description: 'ID de la tarea padre si esta es una subtarea (opcional)' },
+        blockedBy: { type: 'array', items: { type: 'string' }, description: 'IDs de tareas que bloquean esta tarea (opcional)' },
+        blocks: { type: 'array', items: { type: 'string' }, description: 'IDs de tareas que esta tarea bloquea (opcional)' },
         userId: { type: 'string', description: 'UID del creador. Si no se pasa, usa el default.' },
         userName: { type: 'string', description: 'Nombre del creador.' },
       },
       required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests'],
     },
-    handler: async ({ projectId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, userId, userName }) => {
+    handler: async ({ projectId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, parentTaskId, blockedBy, blocks, userId, userName }) => {
       const uid = userId || config.defaultUserId;
       const uname = userName || config.defaultUserName;
 
@@ -151,6 +186,30 @@ export const taskTools = {
 
       if (!tests || tests.length === 0) {
         return { error: 'Se requiere al menos un test. Define tests con description y tipo (unit/integration/e2e/manual).' };
+      }
+
+      // Validate parentTaskId exists in same project
+      if (parentTaskId) {
+        const parentTask = await getById(PATH, parentTaskId);
+        if (!parentTask || parentTask.projectId !== projectId) {
+          return { error: `Tarea padre ${parentTaskId} no encontrada en el proyecto ${projectId}` };
+        }
+      }
+
+      // Validate blockedBy IDs exist in same project
+      if (blockedBy && blockedBy.length > 0) {
+        const result = await validateTaskIds(blockedBy, projectId);
+        if (!result.valid) {
+          return { error: `Tareas en blockedBy no encontradas en el proyecto: ${result.missing.join(', ')}` };
+        }
+      }
+
+      // Validate blocks IDs exist in same project
+      if (blocks && blocks.length > 0) {
+        const result = await validateTaskIds(blocks, projectId);
+        if (!result.valid) {
+          return { error: `Tareas en blocks no encontradas en el proyecto: ${result.missing.join(', ')}` };
+        }
       }
 
       const now = Date.now();
@@ -185,6 +244,11 @@ export const taskTools = {
           status: t.status || 'pending',
         })),
         attachments: attachments || [],
+        parentTaskId: parentTaskId || '',
+        blockedBy: blockedBy || [],
+        blocks: blocks || [],
+        subtaskIds: [],
+        decomposed: false,
         createdAt: now,
         updatedAt: now,
         createdBy: uid || '',
@@ -206,6 +270,50 @@ export const taskTools = {
         newValue: title,
         action: 'create',
       });
+
+      // Update parent task's subtaskIds
+      if (parentTaskId) {
+        const parentTask = await getById(PATH, parentTaskId);
+        if (parentTask) {
+          const existingSubtaskIds = parentTask.subtaskIds || [];
+          await update(PATH, parentTaskId, {
+            subtaskIds: [...existingSubtaskIds, id],
+            updatedAt: now,
+          });
+        }
+      }
+
+      // Update inverse blocks relationship: for each task in blockedBy, add this task to their blocks
+      if (blockedBy && blockedBy.length > 0) {
+        for (const blockerId of blockedBy) {
+          const blockerTask = await getById(PATH, blockerId);
+          if (blockerTask) {
+            const existingBlocks = blockerTask.blocks || [];
+            if (!existingBlocks.includes(id)) {
+              await update(PATH, blockerId, {
+                blocks: [...existingBlocks, id],
+                updatedAt: now,
+              });
+            }
+          }
+        }
+      }
+
+      // Update inverse blockedBy relationship: for each task in blocks, add this task to their blockedBy
+      if (blocks && blocks.length > 0) {
+        for (const blockedId of blocks) {
+          const blockedTask = await getById(PATH, blockedId);
+          if (blockedTask) {
+            const existingBlockedBy = blockedTask.blockedBy || [];
+            if (!existingBlockedBy.includes(id)) {
+              await update(PATH, blockedId, {
+                blockedBy: [...existingBlockedBy, id],
+                updatedAt: now,
+              });
+            }
+          }
+        }
+      }
 
       // Send notification to assigned developer
       if (developer && developer !== uid) {
@@ -293,6 +401,11 @@ export const taskTools = {
             },
           },
         },
+        parentTaskId: { type: 'string', description: 'ID de la tarea padre (para convertir en subtarea)' },
+        blockedBy: { type: 'array', items: { type: 'string' }, description: 'IDs de tareas que bloquean esta tarea' },
+        blocks: { type: 'array', items: { type: 'string' }, description: 'IDs de tareas que esta tarea bloquea' },
+        subtaskIds: { type: 'array', items: { type: 'string' }, description: 'IDs de subtareas (se actualiza automáticamente)' },
+        decomposed: { type: 'boolean', description: 'Indica si la tarea fue descompuesta en subtareas' },
         userId: { type: 'string', description: 'UID del usuario que realiza el cambio' },
         userName: { type: 'string', description: 'Nombre del usuario que realiza el cambio' },
       },
@@ -308,6 +421,44 @@ export const taskTools = {
 
       const clean = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
       if (Object.keys(clean).length === 0) return { error: 'No se proporcionaron campos para actualizar' };
+
+      // Validate blockedBy IDs exist in same project
+      if (clean.blockedBy && clean.blockedBy.length > 0) {
+        const result = await validateTaskIds(clean.blockedBy, task.projectId);
+        if (!result.valid) {
+          return { error: `Tareas en blockedBy no encontradas en el proyecto: ${result.missing.join(', ')}` };
+        }
+        // Check for circular dependencies: if taskId wants to be blocked by depId,
+        // check if depId is already (transitively) blocked by taskId
+        for (const depId of clean.blockedBy) {
+          if (await hasCircularDependency(taskId, depId)) {
+            return { error: `Dependencia circular detectada: ${taskId} no puede ser bloqueada por ${depId}` };
+          }
+        }
+      }
+
+      // Validate blocks IDs exist in same project
+      if (clean.blocks && clean.blocks.length > 0) {
+        const result = await validateTaskIds(clean.blocks, task.projectId);
+        if (!result.valid) {
+          return { error: `Tareas en blocks no encontradas en el proyecto: ${result.missing.join(', ')}` };
+        }
+        // Check for circular dependencies: if taskId wants to block depId,
+        // check if taskId is already (transitively) blocked by depId
+        for (const depId of clean.blocks) {
+          if (await hasCircularDependency(depId, taskId)) {
+            return { error: `Dependencia circular detectada: ${taskId} no puede bloquear a ${depId}` };
+          }
+        }
+      }
+
+      // Validate parentTaskId if being set
+      if (clean.parentTaskId) {
+        const parentTask = await getById(PATH, clean.parentTaskId);
+        if (!parentTask || parentTask.projectId !== task.projectId) {
+          return { error: `Tarea padre ${clean.parentTaskId} no encontrada en el proyecto ${task.projectId}` };
+        }
+      }
 
       // Recalculate priority if points changed
       const biz = clean.bizPoints ?? task.bizPoints;
@@ -461,6 +612,18 @@ export const taskTools = {
 
       await update(PATH, taskId, { status: newStatus, updatedAt: now });
 
+      // When marking as done, clean this task from blockedBy of dependent tasks
+      if (newStatus === 'done') {
+        const blocksIds = task.blocks || [];
+        for (const dependentId of blocksIds) {
+          const dependentTask = await getById(PATH, dependentId);
+          if (dependentTask) {
+            const updatedBlockedBy = (dependentTask.blockedBy || []).filter(id => id !== taskId);
+            await update(PATH, dependentId, { blockedBy: updatedBlockedBy, updatedAt: now });
+          }
+        }
+      }
+
       // History
       const historyRef = getDb().ref(`${PATH}/${taskId}/history`).push();
       await historyRef.set({
@@ -541,6 +704,36 @@ export const taskTools = {
     },
   },
 
+  list_subtasks: {
+    description: 'Lista las subtareas directas de una tarea padre. Devuelve las subtareas ordenadas por prioridad.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'ID de la tarea padre' },
+      },
+      required: ['taskId'],
+    },
+    handler: async ({ taskId }) => {
+      const task = await getById(PATH, taskId);
+      if (!task) return { error: `Tarea ${taskId} no encontrada` };
+
+      const subtaskIds = task.subtaskIds || [];
+      if (subtaskIds.length === 0) return { subtasks: [], message: 'La tarea no tiene subtareas' };
+
+      const subtasks = [];
+      for (const subId of subtaskIds) {
+        const sub = await getById(PATH, subId);
+        if (sub) subtasks.push(sub);
+      }
+
+      return {
+        parentTaskId: taskId,
+        subtasks: subtasks.sort((a, b) => (b.priority || 0) - (a.priority || 0)),
+        total: subtasks.length,
+      };
+    },
+  },
+
   move_tasks_to_sprint: {
     description: 'Mueve múltiples tareas a un sprint específico. Útil para planificación de sprints.',
     inputSchema: {
@@ -577,3 +770,6 @@ export const taskTools = {
     },
   },
 };
+
+// Exported for testing
+export { hasCircularDependency, validateTaskIds };
