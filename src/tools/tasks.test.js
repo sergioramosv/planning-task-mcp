@@ -152,6 +152,35 @@ describe('tasks - dependency model', () => {
       }));
       expect(result.error).toMatch(/Tareas en blocks no encontradas/);
     });
+
+    it('detects circular dependency when blockedBy and blocks overlap', async () => {
+      const taskA = await taskTools.create_task.handler(createTestTask({ title: 'Task A' }));
+
+      const result = await taskTools.create_task.handler(createTestTask({
+        title: 'Task B',
+        blockedBy: [taskA.id],
+        blocks: [taskA.id],
+      }));
+
+      expect(result.error).toMatch(/Dependencia circular detectada/);
+    });
+
+    it('detects transitive circular dependency with blockedBy + blocks', async () => {
+      const taskA = await taskTools.create_task.handler(createTestTask({ title: 'Task A' }));
+      const taskB = await taskTools.create_task.handler(createTestTask({
+        title: 'Task B',
+        blockedBy: [taskA.id],
+      }));
+
+      // Create C that blocks A and is blockedBy B → cycle: A→B→C→A
+      const result = await taskTools.create_task.handler(createTestTask({
+        title: 'Task C',
+        blockedBy: [taskB.id],
+        blocks: [taskA.id],
+      }));
+
+      expect(result.error).toMatch(/Dependencia circular detectada/);
+    });
   });
 
   // ── update_task with dependency fields ────────────────
@@ -228,6 +257,72 @@ describe('tasks - dependency model', () => {
       });
 
       expect(result.error).toMatch(/Tareas en blocks no encontradas/);
+    });
+
+    it('syncs inverse blocks when updating blockedBy', async () => {
+      const task1 = await taskTools.create_task.handler(createTestTask({ title: 'Task 1' }));
+      const task2 = await taskTools.create_task.handler(createTestTask({ title: 'Task 2' }));
+
+      await taskTools.update_task.handler({
+        taskId: task2.id,
+        blockedBy: [task1.id],
+      });
+
+      // task1 should have task2 in its blocks
+      expect(tasksStore[task1.id].blocks).toContain(task2.id);
+
+      // Now remove the dependency
+      await taskTools.update_task.handler({
+        taskId: task2.id,
+        blockedBy: [],
+      });
+
+      // task1 should no longer have task2 in blocks
+      expect(tasksStore[task1.id].blocks).not.toContain(task2.id);
+    });
+
+    it('syncs inverse blockedBy when updating blocks', async () => {
+      const task1 = await taskTools.create_task.handler(createTestTask({ title: 'Task 1' }));
+      const task2 = await taskTools.create_task.handler(createTestTask({ title: 'Task 2' }));
+
+      await taskTools.update_task.handler({
+        taskId: task1.id,
+        blocks: [task2.id],
+      });
+
+      // task2 should have task1 in its blockedBy
+      expect(tasksStore[task2.id].blockedBy).toContain(task1.id);
+
+      // Now remove the dependency
+      await taskTools.update_task.handler({
+        taskId: task1.id,
+        blocks: [],
+      });
+
+      // task2 should no longer have task1 in blockedBy
+      expect(tasksStore[task2.id].blockedBy).not.toContain(task1.id);
+    });
+
+    it('syncs parentTaskId: removes from old parent, adds to new parent', async () => {
+      const parent1 = await taskTools.create_task.handler(createTestTask({ title: 'Parent 1' }));
+      const parent2 = await taskTools.create_task.handler(createTestTask({ title: 'Parent 2' }));
+      const child = await taskTools.create_task.handler(createTestTask({
+        title: 'Child',
+        parentTaskId: parent1.id,
+      }));
+
+      expect(tasksStore[parent1.id].subtaskIds).toContain(child.id);
+
+      // Move child to parent2
+      await taskTools.update_task.handler({
+        taskId: child.id,
+        parentTaskId: parent2.id,
+      });
+
+      // parent1 should no longer have child
+      expect(tasksStore[parent1.id].subtaskIds).not.toContain(child.id);
+      // parent2 should have child
+      expect(tasksStore[parent2.id].subtaskIds).toContain(child.id);
     });
 
     it('rejects update with invalid parentTaskId', async () => {

@@ -212,6 +212,23 @@ export const taskTools = {
         }
       }
 
+      // Check for circular dependency when both blockedBy and blocks are provided
+      if (blockedBy && blockedBy.length > 0 && blocks && blocks.length > 0) {
+        // Direct overlap: a task can't both block and be blocked by the same task
+        const overlap = blockedBy.filter(id => blocks.includes(id));
+        if (overlap.length > 0) {
+          return { error: `Dependencia circular detectada: las tareas ${overlap.join(', ')} están en blockedBy y blocks simultáneamente` };
+        }
+        // Transitive: check if any task in blocks is transitively blocked by a task in blockedBy
+        for (const blockedId of blocks) {
+          for (const blockerId of blockedBy) {
+            if (await hasCircularDependency(blockedId, blockerId)) {
+              return { error: `Dependencia circular detectada: ${blockedId} (en blocks) ya depende transitivamente de ${blockerId} (en blockedBy)` };
+            }
+          }
+        }
+      }
+
       const now = Date.now();
       const priority = calculatePriority(bizPoints, devPoints);
 
@@ -469,6 +486,81 @@ export const taskTools = {
 
       clean.updatedAt = now;
       await update(PATH, taskId, clean);
+
+      // Sync parentTaskId changes: remove from old parent, add to new parent
+      if (clean.parentTaskId !== undefined && clean.parentTaskId !== (task.parentTaskId || '')) {
+        // Remove from old parent's subtaskIds
+        const oldParentId = task.parentTaskId || '';
+        if (oldParentId) {
+          const oldParent = await getById(PATH, oldParentId);
+          if (oldParent) {
+            const oldSubtaskIds = (oldParent.subtaskIds || []).filter(id => id !== taskId);
+            await update(PATH, oldParentId, { subtaskIds: oldSubtaskIds, updatedAt: now });
+          }
+        }
+        // Add to new parent's subtaskIds
+        const newParentId = clean.parentTaskId;
+        if (newParentId) {
+          const newParent = await getById(PATH, newParentId);
+          if (newParent) {
+            const newSubtaskIds = newParent.subtaskIds || [];
+            if (!newSubtaskIds.includes(taskId)) {
+              await update(PATH, newParentId, { subtaskIds: [...newSubtaskIds, taskId], updatedAt: now });
+            }
+          }
+        }
+      }
+
+      // Sync inverse blockedBy/blocks relationships
+      if (clean.blockedBy !== undefined) {
+        const oldBlockedBy = task.blockedBy || [];
+        const newBlockedBy = clean.blockedBy || [];
+        // Remove taskId from blocks of old blockers that are no longer in the list
+        const removedBlockers = oldBlockedBy.filter(id => !newBlockedBy.includes(id));
+        for (const blockerId of removedBlockers) {
+          const blockerTask = await getById(PATH, blockerId);
+          if (blockerTask) {
+            const updatedBlocks = (blockerTask.blocks || []).filter(id => id !== taskId);
+            await update(PATH, blockerId, { blocks: updatedBlocks, updatedAt: now });
+          }
+        }
+        // Add taskId to blocks of new blockers
+        const addedBlockers = newBlockedBy.filter(id => !oldBlockedBy.includes(id));
+        for (const blockerId of addedBlockers) {
+          const blockerTask = await getById(PATH, blockerId);
+          if (blockerTask) {
+            const existingBlocks = blockerTask.blocks || [];
+            if (!existingBlocks.includes(taskId)) {
+              await update(PATH, blockerId, { blocks: [...existingBlocks, taskId], updatedAt: now });
+            }
+          }
+        }
+      }
+
+      if (clean.blocks !== undefined) {
+        const oldBlocks = task.blocks || [];
+        const newBlocks = clean.blocks || [];
+        // Remove taskId from blockedBy of old blocked tasks no longer in the list
+        const removedBlocked = oldBlocks.filter(id => !newBlocks.includes(id));
+        for (const blockedId of removedBlocked) {
+          const blockedTask = await getById(PATH, blockedId);
+          if (blockedTask) {
+            const updatedBlockedBy = (blockedTask.blockedBy || []).filter(id => id !== taskId);
+            await update(PATH, blockedId, { blockedBy: updatedBlockedBy, updatedAt: now });
+          }
+        }
+        // Add taskId to blockedBy of new blocked tasks
+        const addedBlocked = newBlocks.filter(id => !oldBlocks.includes(id));
+        for (const blockedId of addedBlocked) {
+          const blockedTask = await getById(PATH, blockedId);
+          if (blockedTask) {
+            const existingBlockedBy = blockedTask.blockedBy || [];
+            if (!existingBlockedBy.includes(taskId)) {
+              await update(PATH, blockedId, { blockedBy: [...existingBlockedBy, taskId], updatedAt: now });
+            }
+          }
+        }
+      }
 
       // Add history entries for each changed field
       for (const [field, newValue] of Object.entries(clean)) {
