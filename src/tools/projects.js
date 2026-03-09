@@ -63,12 +63,13 @@ export const projectTools = {
         },
         languages: { type: 'string', description: 'Lenguajes de programación separados por coma (ej: "TypeScript, Python, Go")' },
         frameworks: { type: 'string', description: 'Frameworks separados por coma (ej: "Next.js, Tailwind, Express")' },
+        codingGuidelines: { type: 'string', maxLength: 2000, description: 'Instrucciones de codificación del proyecto. Se inyectan automáticamente en los prompts del Coder y Reviewer (max 2000 chars). Formato libre.' },
         userId: { type: 'string', description: 'UID del creador. Si no se pasa, usa el default.' },
         userName: { type: 'string', description: 'Nombre del creador. Si no se pasa, usa el default.' },
       },
       required: ['name', 'description', 'startDate', 'endDate'],
     },
-    handler: async ({ name, description, startDate, endDate, status, repositories, languages, frameworks, userId, userName }) => {
+    handler: async ({ name, description, startDate, endDate, status, repositories, languages, frameworks, codingGuidelines, userId, userName }) => {
       const uid = userId || config.defaultUserId;
       const uname = userName || config.defaultUserName;
       if (!uid) return { error: 'Se requiere userId o configurar DEFAULT_USER_ID' };
@@ -89,6 +90,7 @@ export const projectTools = {
         repositories: repos,
         languages: languages || '',
         frameworks: frameworks || '',
+        codingGuidelines: codingGuidelines || '',
         createdAt: now,
         createdBy: uid,
         members: {
@@ -107,7 +109,7 @@ export const projectTools = {
   },
 
   update_project: {
-    description: 'Actualiza campos de un proyecto existente (nombre, descripción, fechas, estado, repositorios, lenguajes, frameworks).',
+    description: 'Actualiza campos de un proyecto existente (nombre, descripción, fechas, estado, repositorios, lenguajes, frameworks, codingGuidelines).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -132,6 +134,7 @@ export const projectTools = {
         },
         languages: { type: 'string', description: 'Lenguajes de programación separados por coma' },
         frameworks: { type: 'string', description: 'Frameworks separados por coma' },
+        codingGuidelines: { type: 'string', maxLength: 2000, description: 'Instrucciones de codificación del proyecto (max 2000 chars)' },
       },
       required: ['projectId'],
     },
@@ -141,6 +144,10 @@ export const projectTools = {
 
       const clean = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
       if (Object.keys(clean).length === 0) return { error: 'No se proporcionaron campos para actualizar' };
+
+      if (clean.codingGuidelines !== undefined && clean.codingGuidelines.length > 2000) {
+        return { error: 'codingGuidelines no puede superar 2000 caracteres' };
+      }
 
       await update(PATH, projectId, clean);
       return { message: `Proyecto "${project.name}" actualizado`, updated: clean };

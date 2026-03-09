@@ -686,32 +686,35 @@ export const taskTools = {
       properties: {
         taskId: { type: 'string', description: 'ID de la tarea' },
         newStatus: { type: 'string', enum: VALID_STATUSES, description: 'Nuevo estado' },
+        force: { type: 'boolean', description: 'Ignora las validaciones de tests (sólo para automatizaciones)' },
         userId: { type: 'string', description: 'UID del usuario que cambia el estado' },
         userName: { type: 'string', description: 'Nombre del usuario' },
       },
       required: ['taskId', 'newStatus'],
     },
-    handler: async ({ taskId, newStatus, userId, userName }) => {
+    handler: async ({ taskId, newStatus, userId, userName, force }) => {
       const task = await getById(PATH, taskId);
       if (!task) return { error: `Tarea ${taskId} no encontrada` };
 
       if (task.status === newStatus) return { message: `La tarea ya está en estado "${newStatus}"` };
 
       // Validate tests before status transitions
-      const tests = task.tests || [];
-      if (['to-validate', 'validated', 'done'].includes(newStatus)) {
-        if (tests.length === 0) {
-          return { error: `No se puede pasar a "${newStatus}": la tarea no tiene tests definidos. Añade al menos un test con update_task.` };
+      if (!force) {
+        const tests = task.tests || [];
+        if (['to-validate', 'validated', 'done'].includes(newStatus)) {
+          if (tests.length === 0) {
+            return { error: `No se puede pasar a "${newStatus}": la tarea no tiene tests definidos. Añade al menos un test con update_task.` };
+          }
         }
-      }
-      if (['validated', 'done'].includes(newStatus)) {
-        const failed = tests.filter(t => t.status === 'failed');
-        const pending = tests.filter(t => t.status === 'pending');
-        if (failed.length > 0) {
-          return { error: `No se puede pasar a "${newStatus}": hay ${failed.length} test(s) fallidos. Corrígelos primero.` };
-        }
-        if (pending.length > 0) {
-          return { error: `No se puede pasar a "${newStatus}": hay ${pending.length} test(s) pendientes. Ejecútalos y actualiza su estado.` };
+        if (['validated', 'done'].includes(newStatus)) {
+          const failed = tests.filter(t => t.status === 'failed');
+          const pending = tests.filter(t => t.status === 'pending');
+          if (failed.length > 0) {
+            return { error: `No se puede pasar a "${newStatus}": hay ${failed.length} test(s) fallidos. Corrígelos primero.` };
+          }
+          if (pending.length > 0) {
+            return { error: `No se puede pasar a "${newStatus}": hay ${pending.length} test(s) pendientes. Ejecútalos y actualiza su estado.` };
+          }
         }
       }
 

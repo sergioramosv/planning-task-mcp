@@ -17,6 +17,7 @@ import { invitationTools } from './tools/invitations.js';
 import { userTools } from './tools/users.js';
 import { analyticsTools } from './tools/analytics.js';
 import { plannerTools } from './tools/planner.js';
+import { komodoTools } from './tools/komodo.js';
 
 // Validate configuration before starting
 const errors = validateConfig();
@@ -47,6 +48,7 @@ const allTools = {
   ...userTools,
   ...analyticsTools,
   ...plannerTools,
+  ...komodoTools,
 };
 
 // Convert JSON Schema properties to Zod schemas
