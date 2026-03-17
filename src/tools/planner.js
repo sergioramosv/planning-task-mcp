@@ -207,6 +207,21 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
                     devPoints: { type: 'number' },
                     developer: { type: 'string', description: 'UID del developer sugerido (opcional)' },
                     status: { type: 'string', description: 'Default: to-do' },
+                    tests: {
+                      type: 'array',
+                      description: 'Tests de la tarea (opcional en plan, se generan automáticamente si no se proporcionan)',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          description: { type: 'string' },
+                          type: { type: 'string', enum: ['unit', 'integration', 'e2e', 'manual'] },
+                          status: { type: 'string', enum: ['pending', 'passed', 'failed'] },
+                        },
+                        required: ['description'],
+                      },
+                    },
+                    blockedBy: { type: 'array', items: { type: 'string' }, description: 'IDs de tareas que bloquean esta tarea (opcional)' },
+                    blocks: { type: 'array', items: { type: 'string' }, description: 'IDs de tareas que esta tarea bloquea (opcional)' },
                     implementationPlan: {
                       type: 'object',
                       description: 'Plan técnico para tareas complejas (devPoints >= 8)',
@@ -280,6 +295,11 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
           const priority = devPoints > 0 ? Math.round((taskPlan.bizPoints / devPoints) * 10) / 10 : 0;
           const taskNow = Date.now();
 
+          // Auto-generate a default test from acceptance criteria if none provided
+          const tests = taskPlan.tests && taskPlan.tests.length > 0
+            ? taskPlan.tests.map(t => ({ description: t.description, type: t.type || 'manual', status: t.status || 'pending' }))
+            : [{ description: `Verificar: ${taskPlan.title}`, type: 'manual', status: 'pending' }];
+
           const taskData = {
             title: taskPlan.title,
             projectId,
@@ -302,7 +322,13 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
               risks: taskPlan.implementationPlan.risks || '',
               outOfScope: taskPlan.implementationPlan.outOfScope || '',
             } : null,
+            tests,
             attachments: [],
+            parentTaskId: '',
+            blockedBy: taskPlan.blockedBy || [],
+            blocks: taskPlan.blocks || [],
+            subtaskIds: [],
+            decomposed: false,
             status: taskPlan.status || 'to-do',
             createdAt: taskNow,
             updatedAt: taskNow,
