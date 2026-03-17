@@ -651,6 +651,38 @@ export const taskTools = {
       const task = await getById(PATH, taskId);
       if (!task) return { error: `Tarea ${taskId} no encontrada` };
 
+      // Clean up inverse relationships before deleting
+      // 1. Remove from parent's subtaskIds
+      if (task.parentTaskId) {
+        const parent = await getById(PATH, task.parentTaskId);
+        if (parent && Array.isArray(parent.subtaskIds)) {
+          const updatedSubtasks = parent.subtaskIds.filter(id => id !== taskId);
+          await update(PATH, task.parentTaskId, { subtaskIds: updatedSubtasks });
+        }
+      }
+
+      // 2. Remove from blockers' blocks array (tasks that this task is blocked by)
+      if (Array.isArray(task.blockedBy)) {
+        for (const blockerId of task.blockedBy) {
+          const blocker = await getById(PATH, blockerId);
+          if (blocker && Array.isArray(blocker.blocks)) {
+            const updatedBlocks = blocker.blocks.filter(id => id !== taskId);
+            await update(PATH, blockerId, { blocks: updatedBlocks });
+          }
+        }
+      }
+
+      // 3. Remove from blocked tasks' blockedBy array (tasks that this task blocks)
+      if (Array.isArray(task.blocks)) {
+        for (const blockedId of task.blocks) {
+          const blocked = await getById(PATH, blockedId);
+          if (blocked && Array.isArray(blocked.blockedBy)) {
+            const updatedBlockedBy = blocked.blockedBy.filter(id => id !== taskId);
+            await update(PATH, blockedId, { blockedBy: updatedBlockedBy });
+          }
+        }
+      }
+
       // Delete associated comments
       try {
         await getDb().ref(`comments/${taskId}`).remove();
@@ -857,8 +889,9 @@ export const taskTools = {
       required: ['taskIds', 'sprintId'],
     },
     handler: async ({ taskIds, sprintId }) => {
+      let sprint = null;
       if (sprintId) {
-        const sprint = await getById('sprints', sprintId);
+        sprint = await getById('sprints', sprintId);
         if (!sprint) return { error: `Sprint ${sprintId} no encontrado` };
       }
 
@@ -868,6 +901,11 @@ export const taskTools = {
         const task = await getById(PATH, taskId);
         if (!task) {
           errors.push(`Tarea ${taskId} no encontrada`);
+          continue;
+        }
+        // Validate sprint belongs to same project as task
+        if (sprint && task.projectId && sprint.projectId && sprint.projectId !== task.projectId) {
+          errors.push(`Tarea ${taskId} pertenece al proyecto ${task.projectId}, pero el sprint pertenece al proyecto ${sprint.projectId}`);
           continue;
         }
         await update(PATH, taskId, { sprintId, updatedAt: Date.now() });

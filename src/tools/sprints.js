@@ -107,6 +107,13 @@ export const sprintTools = {
       const clean = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
       if (Object.keys(clean).length === 0) return { error: 'No se proporcionaron campos para actualizar' };
 
+      // Validate endDate > startDate (combining updates with existing values)
+      const effectiveStart = clean.startDate || sprint.startDate;
+      const effectiveEnd = clean.endDate || sprint.endDate;
+      if (effectiveStart && effectiveEnd && new Date(effectiveEnd) <= new Date(effectiveStart)) {
+        return { error: 'La fecha de fin debe ser posterior a la fecha de inicio' };
+      }
+
       await update(PATH, sprintId, clean);
       return { message: `Sprint "${sprint.name}" actualizado`, updated: clean };
     },
