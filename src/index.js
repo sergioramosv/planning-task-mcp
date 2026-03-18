@@ -18,6 +18,14 @@ import { userTools } from './tools/users.js';
 import { analyticsTools } from './tools/analytics.js';
 import { plannerTools } from './tools/planner.js';
 import { komodoTools } from './tools/komodo.js';
+import { epicTools } from './tools/epics.js';
+import { achievementTools } from './tools/achievements.js';
+import { taskTemplateTools } from './tools/taskTemplates.js';
+import { retrospectiveTools } from './tools/retrospectives.js';
+import { standupTools } from './tools/standup.js';
+import { workflowTools } from './tools/workflows.js';
+import { timeTrackingTools } from './tools/timeTracking.js';
+import { savedViewTools } from './tools/savedViews.js';
 
 // Validate configuration before starting
 const errors = validateConfig();
@@ -49,6 +57,14 @@ const allTools = {
   ...analyticsTools,
   ...plannerTools,
   ...komodoTools,
+  ...epicTools,
+  ...achievementTools,
+  ...taskTemplateTools,
+  ...retrospectiveTools,
+  ...standupTools,
+  ...workflowTools,
+  ...timeTrackingTools,
+  ...savedViewTools,
 };
 
 // Convert JSON Schema properties to Zod schemas
