@@ -3,6 +3,7 @@ import { config } from '../config.js';
 
 const PATH = 'proposals';
 const FIBONACCI = [1, 2, 3, 5, 8, 13];
+const BIZ_FIBONACCI = [1, 2, 3, 5, 8, 13, 21, 34];
 
 export const proposalTools = {
   list_proposals: {
@@ -40,7 +41,7 @@ export const proposalTools = {
           required: ['who', 'what', 'why'],
         },
         acceptanceCriteria: { type: 'array', items: { type: 'string' }, description: 'Criterios de aceptación' },
-        bizPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13)' },
+        bizPoints: { type: 'number', enum: BIZ_FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13,21,34)' },
         devPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de desarrollo (Fibonacci)' },
         startDate: { type: 'string', description: 'Fecha estimada de inicio (YYYY-MM-DD)' },
         userId: { type: 'string' },
@@ -73,6 +74,46 @@ export const proposalTools = {
 
       const id = await create(PATH, proposalData);
       return { id, message: `Propuesta "${title}" creada en "${project.name}"`, proposal: { id, ...proposalData } };
+    },
+  },
+
+  update_proposal: {
+    description: 'Actualiza campos de una propuesta existente (título, userStory, criterios, puntos, fecha).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        proposalId: { type: 'string', description: 'ID de la propuesta' },
+        title: { type: 'string', description: 'Nuevo título' },
+        userStory: {
+          type: 'object',
+          properties: {
+            who: { type: 'string' },
+            what: { type: 'string' },
+            why: { type: 'string' },
+          },
+        },
+        acceptanceCriteria: { type: 'array', items: { type: 'string' }, description: 'Nuevos criterios de aceptación' },
+        bizPoints: { type: 'number', description: 'Nuevos puntos de negocio (Fibonacci)' },
+        devPoints: { type: 'number', description: 'Nuevos puntos de desarrollo (Fibonacci)' },
+        startDate: { type: 'string', description: 'Nueva fecha estimada de inicio (YYYY-MM-DD)' },
+      },
+      required: ['proposalId'],
+    },
+    handler: async ({ proposalId, ...updates }) => {
+      const proposal = await getById(PATH, proposalId);
+      if (!proposal) return { error: `Propuesta ${proposalId} no encontrada` };
+      if (proposal.status !== 'pending') return { error: `Solo se pueden editar propuestas pendientes. Estado actual: ${proposal.status}` };
+
+      const clean = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
+      if (Object.keys(clean).length === 0) return { error: 'No se proporcionaron campos para actualizar' };
+
+      if (clean.acceptanceCriteria) {
+        clean.acceptanceCriteria = clean.acceptanceCriteria.filter(c => c.trim().length > 0);
+      }
+
+      clean.updatedAt = Date.now();
+      await update(PATH, proposalId, clean);
+      return { message: `Propuesta "${proposal.title}" actualizada`, updated: clean };
     },
   },
 

@@ -10,6 +10,7 @@ function calculatePriority(bizPoints, devPoints) {
 
 const VALID_STATUSES = ['to-do', 'in-progress', 'to-validate', 'validated', 'done'];
 const FIBONACCI = [1, 2, 3, 5, 8, 13];
+const BIZ_FIBONACCI = [1, 2, 3, 5, 8, 13, 21, 34];
 
 /**
  * Detects circular dependencies in blockedBy/blocks graph.
@@ -111,7 +112,7 @@ export const taskTools = {
           items: { type: 'string' },
           description: 'Lista de criterios de aceptación (mínimo 1)',
         },
-        bizPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13). Valor de negocio de la tarea.' },
+        bizPoints: { type: 'number', enum: BIZ_FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13,21,34). Valor de negocio de la tarea.' },
         devPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de desarrollo (Fibonacci: 1,2,3,5,8,13). Esfuerzo técnico.' },
         sprintId: { type: 'string', description: 'ID del sprint (opcional, se puede asignar después)' },
         developer: { type: 'string', description: 'UID del desarrollador asignado (opcional)' },
@@ -369,7 +370,7 @@ export const taskTools = {
           },
         },
         acceptanceCriteria: { type: 'array', items: { type: 'string' } },
-        bizPoints: { type: 'number', enum: FIBONACCI, description: 'Nuevos puntos de negocio (Fibonacci: 1,2,3,5,8,13)' },
+        bizPoints: { type: 'number', enum: BIZ_FIBONACCI, description: 'Nuevos puntos de negocio (Fibonacci: 1,2,3,5,8,13,21,34)' },
         devPoints: { type: 'number', enum: FIBONACCI, description: 'Nuevos puntos de desarrollo (Fibonacci)' },
         sprintId: { type: 'string', description: 'Nuevo sprint ID (vacío para desasignar)' },
         developer: { type: 'string', description: 'Nuevo desarrollador UID' },

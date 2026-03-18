@@ -56,12 +56,27 @@ export const bugTools = {
         severity: { type: 'string', enum: SEVERITIES, description: 'Severidad: critical, high, medium, low' },
         assignedTo: { type: 'string', description: 'UID del desarrollador asignado (opcional)' },
         status: { type: 'string', enum: BUG_STATUSES, description: 'Estado inicial. Default: open' },
+        attachments: {
+          type: 'array',
+          description: 'Archivos adjuntos del bug (opcional). Capturas de pantalla, logs, etc.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'ID único del adjunto' },
+              name: { type: 'string', description: 'Nombre del archivo' },
+              url: { type: 'string', description: 'URL pública de descarga' },
+              uploadedAt: { type: 'number', description: 'Timestamp de subida' },
+              uploadedBy: { type: 'string', description: 'UID del usuario que subió' },
+            },
+            required: ['id', 'name', 'url', 'uploadedAt', 'uploadedBy'],
+          },
+        },
         userId: { type: 'string', description: 'UID del creador' },
         userName: { type: 'string', description: 'Nombre del creador' },
       },
       required: ['projectId', 'title', 'description', 'severity'],
     },
-    handler: async ({ projectId, title, description, severity, assignedTo, status, userId, userName }) => {
+    handler: async ({ projectId, title, description, severity, assignedTo, status, attachments, userId, userName }) => {
       const uid = userId || config.defaultUserId;
       const uname = userName || config.defaultUserName;
 
@@ -76,7 +91,7 @@ export const bugTools = {
         severity,
         status: status || 'open',
         assignedTo: assignedTo || '',
-        attachments: [],
+        attachments: attachments || [],
         createdAt: now,
         updatedAt: now,
         createdBy: uid || '',
@@ -89,7 +104,7 @@ export const bugTools = {
   },
 
   update_bug: {
-    description: 'Actualiza un bug existente (título, descripción, severidad, estado, asignación).',
+    description: 'Actualiza un bug existente (título, descripción, severidad, estado, asignación, adjuntos).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -99,6 +114,20 @@ export const bugTools = {
         severity: { type: 'string', enum: SEVERITIES },
         status: { type: 'string', enum: BUG_STATUSES },
         assignedTo: { type: 'string', description: 'UID del desarrollador (vacío para desasignar)' },
+        attachments: {
+          type: 'array',
+          description: 'Archivos adjuntos (reemplaza los existentes)',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              url: { type: 'string' },
+              uploadedAt: { type: 'number' },
+              uploadedBy: { type: 'string' },
+            },
+          },
+        },
       },
       required: ['bugId'],
     },

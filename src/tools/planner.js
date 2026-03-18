@@ -15,10 +15,11 @@ import { config } from '../config.js';
  */
 
 const FIBONACCI = [1, 2, 3, 5, 8, 13];
+const BIZ_FIBONACCI = [1, 2, 3, 5, 8, 13, 21, 34];
 
-function nearestFibonacci(n) {
-  let closest = FIBONACCI[0];
-  for (const f of FIBONACCI) {
+function nearestFibonacci(n, scale = FIBONACCI) {
+  let closest = scale[0];
+  for (const f of scale) {
     if (Math.abs(f - n) < Math.abs(closest - n)) closest = f;
   }
   return closest;
@@ -116,7 +117,7 @@ FORMATO DE CADA TAREA:
 - title: Título descriptivo y técnico
 - userStory: { who: "Como [actor]", what: "quiero [funcionalidad]", why: "para [beneficio]" }
 - acceptanceCriteria: [criterios concretos y verificables]
-- bizPoints: Fibonacci (1,2,3,5,8,13) - valor de negocio
+- bizPoints: Fibonacci (1,2,3,5,8,13,21,34) - valor de negocio
 - devPoints: Fibonacci (1,2,3,5,8,13) - esfuerzo técnico
 
 PARA TAREAS COMPLEJAS (devPoints >= 8), INCLUYE implementationPlan:
@@ -291,8 +292,11 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
           const devPoints = FIBONACCI.includes(taskPlan.devPoints)
             ? taskPlan.devPoints
             : nearestFibonacci(taskPlan.devPoints);
+          const bizPoints = BIZ_FIBONACCI.includes(taskPlan.bizPoints)
+            ? taskPlan.bizPoints
+            : nearestFibonacci(taskPlan.bizPoints, BIZ_FIBONACCI);
 
-          const priority = devPoints > 0 ? Math.round((taskPlan.bizPoints / devPoints) * 10) / 10 : 0;
+          const priority = devPoints > 0 ? Math.round((bizPoints / devPoints) * 10) / 10 : 0;
           const taskNow = Date.now();
 
           // Auto-generate a default test from acceptance criteria if none provided
@@ -306,7 +310,7 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
             sprintId,
             userStory: taskPlan.userStory,
             acceptanceCriteria: (taskPlan.acceptanceCriteria || []).filter(c => c && c.trim().length > 0),
-            bizPoints: taskPlan.bizPoints,
+            bizPoints,
             devPoints,
             priority,
             developer: taskPlan.developer || '',
@@ -358,7 +362,7 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
               title: taskPlan.title,
               sprintName: sprintPlan.name,
               devPoints,
-              bizPoints: taskPlan.bizPoints,
+              bizPoints,
               priority,
             });
             results.totalTasks++;

@@ -95,8 +95,8 @@ Task {
 
   acceptanceCriteria: string[]  // Mínimo 1
 
-  bizPoints: number     // 1-100 (valor de negocio)
-  devPoints: number     // Fibonacci: 1, 2, 3, 5, 8, 13
+  bizPoints: number     // Fibonacci: 1, 2, 3, 5, 8, 13, 21, 34 (valor de negocio)
+  devPoints: number     // Fibonacci: 1, 2, 3, 5, 8, 13 (esfuerzo técnico)
   priority: number      // Calculado: bizPoints / devPoints
 
   developer: string     // UID asignado (opcional)
@@ -136,6 +136,60 @@ Task {
 }
 ```
 
+### Estructura de un Bug
+
+```
+Bug {
+  id: string
+  title: string
+  description: string
+  projectId: string
+  severity: "critical" | "high" | "medium" | "low"
+  status: "open" | "in-progress" | "resolved" | "closed"
+  assignedTo: string   // UID (opcional)
+
+  attachments?: [{
+    id: string
+    name: string          // Nombre del archivo
+    url: string           // URL pública de descarga
+    uploadedAt: number    // Timestamp
+    uploadedBy: string    // UID del usuario
+  }]
+
+  createdAt: number
+  updatedAt: number
+  createdBy: string
+  createdByName: string
+}
+```
+
+### Estructura de una Propuesta
+
+```
+Proposal {
+  id: string
+  title: string
+  projectId: string
+
+  userStory: {
+    who: string    // "Como [actor]..."
+    what: string   // "quiero [funcionalidad]..."
+    why: string    // "para [beneficio]..."
+  }
+
+  acceptanceCriteria: string[]
+  bizPoints: number     // Fibonacci: 1, 2, 3, 5, 8, 13, 21, 34
+  devPoints: number     // Fibonacci: 1, 2, 3, 5, 8, 13
+  startDate: string     // YYYY-MM-DD (estimada)
+  status: "pending" | "accepted" | "rejected"
+
+  createdAt: number
+  updatedAt: number
+  createdBy: string
+  createdByName: string
+}
+```
+
 ### Estados
 
 | Entidad | Estados válidos |
@@ -157,6 +211,19 @@ Task {
 | 8 | Complejo | 1 semana |
 | 13 | Muy Complejo | 1-2 semanas |
 
+### Escala Fibonacci para bizPoints (valor de negocio)
+
+| Puntos | Significado |
+|--------|-------------|
+| 1 | Valor mínimo - mejora cosmética |
+| 2 | Valor bajo - nice-to-have |
+| 3 | Valor medio-bajo - mejora menor |
+| 5 | Valor medio - funcionalidad útil |
+| 8 | Valor alto - funcionalidad importante |
+| 13 | Valor muy alto - funcionalidad core |
+| 21 | Valor crítico - diferenciador de negocio |
+| 34 | Valor máximo - funcionalidad esencial sin la cual el producto no funciona |
+
 ### Roles de Proyecto
 
 | Rol | Puede hacer |
@@ -168,7 +235,7 @@ Task {
 
 ---
 
-## Tools Disponibles (38 tools)
+## Tools Disponibles (39 tools)
 
 ### Proyectos
 - `list_projects` - Listar proyectos del usuario (filtra por DEFAULT_USER_ID automáticamente)
@@ -197,13 +264,14 @@ Task {
 ### Bugs
 - `list_bugs` - Listar bugs (filtrar por estado/severidad)
 - `get_bug` - Detalle de bug
-- `create_bug` - Crear reporte de bug
-- `update_bug` - Actualizar bug
+- `create_bug` - Crear reporte de bug (con adjuntos opcionales)
+- `update_bug` - Actualizar bug (incluyendo adjuntos)
 - `delete_bug` - Eliminar bug
 
 ### Propuestas
 - `list_proposals` - Listar propuestas
 - `create_proposal` - Crear propuesta
+- `update_proposal` - Editar campos de una propuesta (título, userStory, criterios, puntos)
 - `update_proposal_status` - Aprobar/rechazar propuesta
 - `delete_proposal` - Eliminar propuesta
 
@@ -284,7 +352,7 @@ Las variables de entorno `DEFAULT_USER_ID` y `DEFAULT_USER_NAME` se configuran e
 - **title**: Descriptivo y específico (no genérico)
 - **userStory**: Siempre completa con who/what/why. Piensa desde la perspectiva del usuario final.
 - **acceptanceCriteria**: Mínimo 2-3 criterios concretos y verificables
-- **bizPoints**: Evalúa el impacto real de negocio (1-100)
+- **bizPoints**: Evalúa el impacto real de negocio (Fibonacci: 1,2,3,5,8,13,21,34)
 - **devPoints**: Usa la escala Fibonacci honestamente según la complejidad real
 - **status**: Default `to-do` a menos que se indique otra cosa
 
@@ -345,7 +413,22 @@ Siempre formatea la información de forma legible:
 - Destaca alertas: bugs críticos, tareas sin asignar, sprints a punto de terminar
 - Si el usuario pide un "resumen" o "estado", usa `project_summary` o `project_dashboard`
 
-### 8. Operaciones en lote
+### 8. Al crear bugs SIEMPRE incluye
+
+- **title**: Descriptivo del problema encontrado
+- **description**: Descripción detallada con pasos para reproducir, comportamiento esperado vs actual
+- **severity**: Evalúa honestamente la severidad (critical, high, medium, low)
+- **attachments**: Si tienes capturas de pantalla, logs o archivos relevantes, adjúntalos con `{id, name, url, uploadedAt, uploadedBy}`
+- **assignedTo**: Si se conoce quién debe resolverlo, asígnalo
+
+### 9. Al gestionar propuestas
+
+- Para **crear** propuestas: usa `create_proposal` con userStory completa, criterios de aceptación y puntos
+- Para **editar** campos de una propuesta pendiente: usa `update_proposal` (título, userStory, criterios, puntos, fecha)
+- Para **aprobar/rechazar**: usa `update_proposal_status`
+- Solo se pueden editar propuestas en estado `pending`
+
+### 10. Operaciones en lote
 
 Cuando el usuario necesite hacer cambios masivos (mover muchas tareas, cambiar estados de varias, etc.):
 - Usa `move_tasks_to_sprint` para mover tareas en bloque
@@ -463,7 +546,7 @@ Cada épica se divide en tareas que tienen sentido como unidad de trabajo indepe
 - NO hagas: "Crear campo email", "Crear campo password", "Crear botón submit" (demasiado granular)
 
 ### Paso 3: Estimar Puntos
-- **bizPoints**: ¿Qué tan importante es para el negocio? Login = 80 (crítico), Tema oscuro = 20 (nice-to-have)
+- **bizPoints**: ¿Qué tan importante es para el negocio? Login = 34 (crítico), Tema oscuro = 3 (nice-to-have). Usa Fibonacci: 1,2,3,5,8,13,21,34
 - **devPoints**: ¿Qué tan complejo es técnicamente? Login con OAuth = 8, Cambiar color = 1
 
 ### Paso 4: Organizar en Sprints
