@@ -4,8 +4,15 @@
   "description": "MCP Server for Planning Task - Full autonomous project management via Firebase Realtime Database",
   "type": "module",
   "bin": {
-    "planning-task-mcp": "./src/index.js"
+    "planning-task-mcp": "src/index.js",
+    "planning-task-mcp-setup": "src/setup.js"
   },
+  "files": [
+    "src/",
+    "!src/**/*.test.js",
+    "INSTRUCTIONS.md",
+    "README.md"
+  ],
   "scripts": {
     "setup": "node src/setup.js",
     "start": "node src/index.js",
@@ -14,12 +21,33 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "firebase-admin": "^13.0.0",
-    "dotenv": "^16.4.7",
     "zod": "^3.24.2"
   },
-  "keywords": ["mcp", "planning", "firebase", "project-management"],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "planning",
+    "project-management",
+    "firebase",
+    "task-management",
+    "sprint",
+    "agile",
+    "claude",
+    "codex",
+    "gemini",
+    "ai-tools"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sergioramosv/planning-task-mcp.git"
+  },
+  "author": "Sergio Ramos <sergioramosvicente2004@gmail.com>",
+  "homepage": "https://github.com/sergioramosv/planning-task-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/sergioramosv/planning-task-mcp/issues"
   }
 }

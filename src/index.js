@@ -32,7 +32,7 @@ const errors = validateConfig();
 if (errors.length > 0) {
   console.error('Planning MCP - Errores de configuración:');
   errors.forEach(e => console.error(`  - ${e}`));
-  console.error('\nEjecuta: npm run setup');
+  console.error('\nEjecuta: planning-task-mcp-setup (o npm run setup)');
   process.exit(1);
 }
 

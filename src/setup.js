@@ -84,6 +84,19 @@ function ensureDependencies() {
     return;
   }
 
+  // When installed globally via npm, deps are in the global node_modules tree
+  // Check by trying to resolve from the package's own directory
+  try {
+    const result = execSync('node -e "require.resolve(\'firebase-admin\')"', {
+      cwd: PROJECT_ROOT,
+      stdio: 'pipe',
+    });
+    console.log('  ✓ Dependencias disponibles (instalación global)');
+    return;
+  } catch {
+    // Not available — install locally
+  }
+
   console.log('  Instalando dependencias (npm install)...');
   try {
     execSync('npm install', { cwd: PROJECT_ROOT, stdio: 'pipe' });
@@ -171,10 +184,32 @@ function getMcpClients() {
   ];
 }
 
-function buildTomlBlock(envVars) {
+function detectInstallMode() {
+  // Check if running from a global npm install (bin is in PATH)
+  const binName = 'planning-task-mcp';
+  try {
+    const globalBin = execSync('npm bin -g', { encoding: 'utf-8' }).trim();
+    const isWin = process.platform === 'win32';
+    const binPath = join(globalBin, isWin ? `${binName}.cmd` : binName);
+    if (existsSync(binPath)) return 'global';
+  } catch { /* */ }
+  // Fallback: use node + absolute path (local dev)
+  return 'local';
+}
+
+function buildMcpCommand() {
+  const mode = detectInstallMode();
+  if (mode === 'global') {
+    return { command: 'planning-task-mcp', args: [] };
+  }
   const indexPath = join(PROJECT_ROOT, 'src', 'index.js').replace(/\\/g, '/');
-  const argsStr = `["${indexPath}"]`;
-  let block = `[mcp_servers.planning-task-mcp]\ncommand = "node"\nargs = ${argsStr}\n`;
+  return { command: 'node', args: [indexPath] };
+}
+
+function buildTomlBlock(envVars) {
+  const { command, args } = buildMcpCommand();
+  const argsStr = args.length > 0 ? `[${args.map(a => `"${a}"`).join(', ')}]` : '[]';
+  let block = `[mcp_servers.planning-task-mcp]\ncommand = "${command}"\nargs = ${argsStr}\n`;
   block += `\n[mcp_servers.planning-task-mcp.env]\n`;
   for (const [k, v] of Object.entries(envVars)) {
     block += `${k} = "${v}"\n`;
@@ -183,10 +218,10 @@ function buildTomlBlock(envVars) {
 }
 
 function registerInClients(envVars) {
-  const indexPath = join(PROJECT_ROOT, 'src', 'index.js').replace(/\\/g, '/');
+  const { command, args } = buildMcpCommand();
   const mcpServerEntry = {
-    command: 'node',
-    args: [indexPath],
+    command,
+    args,
     env: envVars,
   };
 
@@ -468,7 +503,13 @@ async function setup() {
   // ═══ STEP 6: Verification ═══
   printStep(6, 'Verificación');
 
-  const depsOk = existsSync(join(PROJECT_ROOT, 'node_modules', '@modelcontextprotocol', 'sdk'));
+  let depsOk = existsSync(join(PROJECT_ROOT, 'node_modules', '@modelcontextprotocol', 'sdk'));
+  if (!depsOk) {
+    try {
+      execSync('node -e "require.resolve(\'@modelcontextprotocol/sdk\')"', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+      depsOk = true;
+    } catch { /* */ }
+  }
   const saKeyOk = existsSync(saInfo.path);
 
   console.log('  ╔══════════════════════════════════════════╗');
