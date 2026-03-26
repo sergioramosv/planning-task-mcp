@@ -1,4 +1,4 @@
-import { getAll, getById, create, getDb } from '../firebase.js';
+import { getAll, getById, create, update, getDb } from '../firebase.js';
 import { config } from '../config.js';
 
 /**
@@ -160,13 +160,22 @@ DESPUÉS de generar el plan, USA create_full_plan para ejecutarlo de una vez.`,
         document,
 
         fibonacciScale: {
-          1: 'Muy Simple - Cambio de texto, config, fix trivial (1-2 horas)',
-          2: 'Simple - Componente básico, CRUD simple, ajuste menor (medio día)',
-          3: 'Medio - Feature pequeña completa, integración simple (1 día)',
-          5: 'Moderado - Feature mediana, lógica de negocio, testing (2-3 días)',
-          8: 'Complejo - Feature grande, múltiples componentes, integración compleja (1 semana)',
-          13: 'Muy Complejo - Sistema completo, arquitectura nueva, refactor mayor (1-2 semanas)',
+          1: 'Trivial - Cambio de texto, config env, fix de typo (30min-1h)',
+          2: 'Muy Simple - Componente estático, ajuste CSS, añadir campo a form existente (1-2h)',
+          3: 'Simple - Página nueva con layout conocido, CRUD básico con librería existente, configurar Firebase/Auth con docs (medio día)',
+          5: 'Medio - Feature completa con lógica de negocio, formulario con validación + upload + API, integración con servicio externo (1-2 días)',
+          8: 'Complejo - Feature multi-página con estado compartido, sistema de permisos/roles, flujo completo con múltiples integraciones (3-5 días)',
+          13: 'Muy Complejo - Arquitectura nueva desde cero, sistema completo end-to-end con auth+DB+API+UI, refactor mayor que toca 10+ archivos (1-2 semanas)',
         },
+        devPointsGuidelines: `IMPORTANTE - Calibración de puntos:
+- Configurar Firebase Auth siguiendo docs oficiales = 3 puntos (NO 8, es seguir un tutorial)
+- CRUD de una entidad (lista + crear + editar + borrar) = 5 puntos
+- Layout con sidebar + header = 3 puntos (son componentes de UI, no lógica compleja)
+- Login page con formulario = 2-3 puntos
+- Página con estado vacío y un mensaje = 1-2 puntos
+- Formulario con upload de imagen = 3 puntos
+- Sistema de roles y permisos completo = 8 puntos
+- NO infles puntos. Si dudas, pon MENOS. Un dev senior hace un CRUD en medio día.`,
       };
     },
   },
@@ -206,7 +215,8 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
                     acceptanceCriteria: { type: 'array', items: { type: 'string' } },
                     bizPoints: { type: 'number' },
                     devPoints: { type: 'number' },
-                    developer: { type: 'string', description: 'UID del developer sugerido (opcional)' },
+                    developer: { type: 'string', description: 'UID del developer. Si no se pasa, se auto-asigna el miembro con menos carga.' },
+                    epicId: { type: 'string', description: 'ID de la épica (si existe). Si se pasa, la tarea se vincula automáticamente.' },
                     status: { type: 'string', description: 'Default: to-do' },
                     tests: {
                       type: 'array',
@@ -255,6 +265,30 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
       const project = await getById('projects', projectId);
       if (!project) return { error: `Proyecto ${projectId} no encontrado` };
 
+      // Load project members for auto-assignment
+      const memberIds = project.members ? Object.keys(project.members) : [];
+      const allTasks = await getAll('tasks');
+      const projectTasks = allTasks.filter(t => t.projectId === projectId && t.status !== 'done');
+      const memberLoads = {};
+      for (const mid of memberIds) {
+        memberLoads[mid] = projectTasks.filter(t => t.developer === mid).reduce((sum, t) => sum + (t.devPoints || 0), 0);
+      }
+
+      // Function to get least loaded member and update tracking
+      function getLeastLoadedMember(devPoints) {
+        if (memberIds.length === 0) return '';
+        let minLoad = Infinity;
+        let best = memberIds[0];
+        for (const mid of memberIds) {
+          if ((memberLoads[mid] || 0) < minLoad) {
+            minLoad = memberLoads[mid] || 0;
+            best = mid;
+          }
+        }
+        memberLoads[best] = (memberLoads[best] || 0) + devPoints;
+        return best;
+      }
+
       const results = {
         sprintsCreated: [],
         tasksCreated: [],
@@ -299,10 +333,25 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
           const priority = devPoints > 0 ? Math.round((bizPoints / devPoints) * 10) / 10 : 0;
           const taskNow = Date.now();
 
-          // Auto-generate a default test from acceptance criteria if none provided
-          const tests = taskPlan.tests && taskPlan.tests.length > 0
-            ? taskPlan.tests.map(t => ({ description: t.description, type: t.type || 'manual', status: t.status || 'pending' }))
-            : [{ description: `Verificar: ${taskPlan.title}`, type: 'manual', status: 'pending' }];
+          // Auto-generate tests from acceptance criteria if none provided
+          let tests;
+          if (taskPlan.tests && taskPlan.tests.length > 0) {
+            tests = taskPlan.tests.map(t => ({ description: t.description, type: t.type || 'manual', status: t.status || 'pending' }));
+          } else {
+            // Generate one test per acceptance criterion
+            const criteria = (taskPlan.acceptanceCriteria || []).filter(c => c && c.trim().length > 0);
+            tests = criteria.length > 0
+              ? criteria.map(c => ({ description: `Verificar: ${c}`, type: 'manual', status: 'pending' }))
+              : [{ description: `Verificar: ${taskPlan.title}`, type: 'manual', status: 'pending' }];
+          }
+
+          // Auto-assign developer if not provided
+          const assignedDev = taskPlan.developer || getLeastLoadedMember(devPoints);
+
+          // Generate review checklist from acceptance criteria
+          const reviewChecklist = (taskPlan.acceptanceCriteria || [])
+            .filter(c => c && c.trim().length > 0)
+            .map(c => ({ item: c, checked: false }));
 
           const taskData = {
             title: taskPlan.title,
@@ -313,8 +362,9 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
             bizPoints,
             devPoints,
             priority,
-            developer: taskPlan.developer || '',
+            developer: assignedDev,
             coDeveloper: '',
+            reviewChecklist,
             startDate: sprintPlan.startDate,
             endDate: sprintPlan.endDate,
             implementationPlan: taskPlan.implementationPlan ? {
@@ -357,6 +407,21 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
               action: 'create',
             });
 
+            // Link task to epic if epicId provided
+            if (taskPlan.epicId) {
+              try {
+                const epic = await getById('epics', taskPlan.epicId);
+                if (epic) {
+                  const epicTaskIds = epic.taskIds || [];
+                  await update('epics', taskPlan.epicId, {
+                    taskIds: [...epicTaskIds, taskId],
+                    updatedAt: taskNow,
+                  });
+                  await update('tasks', taskId, { epicId: taskPlan.epicId });
+                }
+              } catch { /* epic link failure shouldn't block plan creation */ }
+            }
+
             results.tasksCreated.push({
               id: taskId,
               title: taskPlan.title,
@@ -364,6 +429,7 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
               devPoints,
               bizPoints,
               priority,
+              developer: assignedDev,
             });
             results.totalTasks++;
             results.totalDevPoints += devPoints;

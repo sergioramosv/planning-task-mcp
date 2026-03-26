@@ -90,12 +90,13 @@ export const taskTools = {
   },
 
   create_task: {
-    description: 'Crea una nueva tarea con User Story, puntos de negocio/desarrollo, criterios de aceptación y asignación opcional. La prioridad se calcula automáticamente como bizPoints/devPoints.',
+    description: 'Crea una nueva tarea con User Story, puntos de negocio/desarrollo, criterios de aceptación, desarrollador y épica obligatorios. Si no se pasa developer, se auto-asigna el miembro del proyecto con menos carga. La prioridad se calcula automáticamente como bizPoints/devPoints.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'ID de la tarea' },
         projectId: { type: 'string', description: 'ID del proyecto al que pertenece' },
+        epicId: { type: 'string', description: 'ID de la épica a la que pertenece (OBLIGATORIO)' },
         title: { type: 'string', description: 'Título de la tarea (3-200 caracteres)' },
         userStory: {
           type: 'object',
@@ -115,7 +116,7 @@ export const taskTools = {
         bizPoints: { type: 'number', enum: BIZ_FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13,21,34). Valor de negocio de la tarea.' },
         devPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de desarrollo (Fibonacci: 1,2,3,5,8,13). Esfuerzo técnico.' },
         sprintId: { type: 'string', description: 'ID del sprint (opcional, se puede asignar después)' },
-        developer: { type: 'string', description: 'UID del desarrollador asignado (opcional)' },
+        developer: { type: 'string', description: 'UID del desarrollador asignado. Si no se pasa, se auto-asigna el miembro con menos carga del proyecto.' },
         coDeveloper: { type: 'string', description: 'UID del co-desarrollador (opcional)' },
         startDate: { type: 'string', description: 'Fecha de inicio (YYYY-MM-DD, opcional)' },
         endDate: { type: 'string', description: 'Fecha de fin (YYYY-MM-DD, opcional)' },
@@ -168,14 +169,23 @@ export const taskTools = {
         userId: { type: 'string', description: 'UID del creador. Si no se pasa, usa el default.' },
         userName: { type: 'string', description: 'Nombre del creador.' },
       },
-      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests'],
+      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests', 'epicId'],
     },
-    handler: async ({ projectId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, parentTaskId, blockedBy, blocks, userId, userName }) => {
+    handler: async ({ projectId, epicId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, parentTaskId, blockedBy, blocks, userId, userName }) => {
       const uid = userId || config.defaultUserId;
       const uname = userName || config.defaultUserName;
 
       const project = await getById('projects', projectId);
       if (!project) return { error: `Proyecto ${projectId} no encontrado` };
+
+      // Validate epicId
+      if (!epicId) {
+        return { error: 'Se requiere epicId. Toda tarea debe pertenecer a una épica.' };
+      }
+      const epic = await getById('epics', epicId);
+      if (!epic || epic.projectId !== projectId) {
+        return { error: `Épica ${epicId} no encontrada en el proyecto ${projectId}` };
+      }
 
       if (!FIBONACCI.includes(devPoints)) {
         return { error: `devPoints debe ser Fibonacci: ${FIBONACCI.join(', ')}` };
@@ -187,6 +197,26 @@ export const taskTools = {
 
       if (!tests || tests.length === 0) {
         return { error: 'Se requiere al menos un test. Define tests con description y tipo (unit/integration/e2e/manual).' };
+      }
+
+      // Auto-assign developer if not provided: find project member with least load
+      if (!developer) {
+        const memberIds = project.members ? Object.keys(project.members) : [];
+        if (memberIds.length === 0) {
+          return { error: 'No se puede auto-asignar developer: el proyecto no tiene miembros. Añade miembros al proyecto primero.' };
+        }
+        const allTasks = await getAll(PATH);
+        const projectTasks = allTasks.filter(t => t.projectId === projectId && t.status !== 'done');
+        let minLoad = Infinity;
+        let bestDev = memberIds[0];
+        for (const mid of memberIds) {
+          const load = projectTasks.filter(t => t.developer === mid).reduce((sum, t) => sum + (t.devPoints || 0), 0);
+          if (load < minLoad) {
+            minLoad = load;
+            bestDev = mid;
+          }
+        }
+        developer = bestDev;
       }
 
       // Validate parentTaskId exists in same project
@@ -350,7 +380,16 @@ export const taskTools = {
         } catch { /* notification failure shouldn't block task creation */ }
       }
 
-      return { id, message: `Tarea "${title}" creada con prioridad ${priority}`, task: { id, ...taskData } };
+      // Add task to epic
+      const epicTaskIds = epic.taskIds || [];
+      await update('epics', epicId, {
+        taskIds: [...epicTaskIds, id],
+        updatedAt: now,
+      });
+      // Also store epicId on the task
+      await update(PATH, id, { epicId });
+
+      return { id, message: `Tarea "${title}" creada con prioridad ${priority} y asignada a épica "${epic.title}"`, task: { id, epicId, ...taskData } };
     },
   },
 
@@ -439,6 +478,11 @@ export const taskTools = {
 
       const clean = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
       if (Object.keys(clean).length === 0) return { error: 'No se proporcionaron campos para actualizar' };
+
+      // GUARDRAIL: Block setting status to "done" via update_task
+      if (clean.status === 'done') {
+        return { error: 'BLOQUEADO: No se puede poner una tarea en "done" desde el CLI. Las tareas solo pueden marcarse como "done" desde la interfaz web por el product owner tras validación.' };
+      }
 
       // Validate blockedBy IDs exist in same project
       if (clean.blockedBy && clean.blockedBy.length > 0) {
@@ -698,6 +742,11 @@ export const taskTools = {
       if (!task) return { error: `Tarea ${taskId} no encontrada` };
 
       if (task.status === newStatus) return { message: `La tarea ya está en estado "${newStatus}"` };
+
+      // GUARDRAIL: Block "done" status completely from MCP
+      if (newStatus === 'done') {
+        return { error: 'BLOQUEADO: No se puede poner una tarea en "done" desde el CLI. Las tareas solo pueden marcarse como "done" desde la interfaz web por el product owner tras validación.' };
+      }
 
       // Validate tests before status transitions
       if (!force) {
