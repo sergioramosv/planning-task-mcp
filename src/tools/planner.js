@@ -353,6 +353,29 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
             .filter(c => c && c.trim().length > 0)
             .map(c => ({ item: c, checked: false }));
 
+          // Auto-generate time estimate from devPoints
+          const DEVPOINTS_TO_HOURS = { 1: 1, 2: 2, 3: 4, 5: 10, 8: 24, 13: 48 };
+          const estimatedHours = DEVPOINTS_TO_HOURS[devPoints] || devPoints * 3;
+
+          // Auto-generate GitHub branch name
+          const slugTitle = taskPlan.title
+            .toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '')
+            .substring(0, 50);
+          const githubBranch = `feature/${slugTitle}`;
+
+          // Auto-generate subtask definitions from implementation steps (for tasks >= 5dp)
+          let autoSubtasks = [];
+          if (devPoints >= 5 && taskPlan.implementationPlan && taskPlan.implementationPlan.steps && taskPlan.implementationPlan.steps.length > 0) {
+            autoSubtasks = taskPlan.implementationPlan.steps.map((step, i) => ({
+              title: step,
+              order: i + 1,
+              status: 'to-do',
+            }));
+          }
+
           const taskData = {
             title: taskPlan.title,
             projectId,
@@ -365,6 +388,17 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
             developer: assignedDev,
             coDeveloper: '',
             reviewChecklist,
+            timeEstimate: {
+              estimatedHours,
+              loggedHours: 0,
+              remainingHours: estimatedHours,
+            },
+            github: {
+              branch: githubBranch,
+              pullRequest: null,
+              commits: [],
+            },
+            subtaskDefinitions: autoSubtasks,
             startDate: sprintPlan.startDate,
             endDate: sprintPlan.endDate,
             implementationPlan: taskPlan.implementationPlan ? {
@@ -382,7 +416,7 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
             blockedBy: taskPlan.blockedBy || [],
             blocks: taskPlan.blocks || [],
             subtaskIds: [],
-            decomposed: false,
+            decomposed: autoSubtasks.length > 0,
             status: taskPlan.status || 'to-do',
             createdAt: taskNow,
             updatedAt: taskNow,
@@ -422,6 +456,45 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
               } catch { /* epic link failure shouldn't block plan creation */ }
             }
 
+            // Create real subtasks from subtaskDefinitions
+            if (autoSubtasks.length > 0) {
+              const subtaskIds = [];
+              for (const sub of autoSubtasks) {
+                const subData = {
+                  title: sub.title,
+                  projectId,
+                  sprintId,
+                  parentTaskId: taskId,
+                  userStory: { who: taskPlan.userStory.who, what: sub.title, why: taskPlan.userStory.why },
+                  acceptanceCriteria: [`Completar: ${sub.title}`],
+                  bizPoints: 1,
+                  devPoints: 1,
+                  priority: 1,
+                  developer: assignedDev,
+                  coDeveloper: '',
+                  status: 'to-do',
+                  tests: [{ description: `Verificar: ${sub.title}`, type: 'manual', status: 'pending' }],
+                  attachments: [],
+                  blockedBy: [],
+                  blocks: [],
+                  subtaskIds: [],
+                  decomposed: false,
+                  createdAt: taskNow,
+                  updatedAt: taskNow,
+                  createdBy: uid || '',
+                  createdByName: uname || '',
+                  history: {},
+                };
+                try {
+                  const subId = await create('tasks', subData);
+                  subtaskIds.push(subId);
+                } catch { /* subtask creation failure shouldn't block */ }
+              }
+              if (subtaskIds.length > 0) {
+                await update('tasks', taskId, { subtaskIds, decomposed: true });
+              }
+            }
+
             results.tasksCreated.push({
               id: taskId,
               title: taskPlan.title,
@@ -430,12 +503,36 @@ Usar DESPUÉS de que la IA haya analizado el documento con plan_from_document y 
               bizPoints,
               priority,
               developer: assignedDev,
+              subtasksCount: autoSubtasks.length,
             });
             results.totalTasks++;
             results.totalDevPoints += devPoints;
           } catch (err) {
             results.errors.push(`Error creando tarea "${taskPlan.title}": ${err.message}`);
           }
+        }
+
+        // Auto-generate sequential dependencies between tasks in same sprint
+        const sprintTaskIds = results.tasksCreated
+          .filter(t => t.sprintName === sprintPlan.name)
+          .map(t => t.id);
+        for (let i = 1; i < sprintTaskIds.length; i++) {
+          const prevId = sprintTaskIds[i - 1];
+          const currId = sprintTaskIds[i];
+          try {
+            const prevTask = await getById('tasks', prevId);
+            const currTask = await getById('tasks', currId);
+            if (prevTask && currTask) {
+              const prevBlocks = prevTask.blocks || [];
+              const currBlockedBy = currTask.blockedBy || [];
+              if (!prevBlocks.includes(currId)) {
+                await update('tasks', prevId, { blocks: [...prevBlocks, currId], updatedAt: Date.now() });
+              }
+              if (!currBlockedBy.includes(prevId)) {
+                await update('tasks', currId, { blockedBy: [...currBlockedBy, prevId], updatedAt: Date.now() });
+              }
+            }
+          } catch { /* dependency failure shouldn't block */ }
         }
       }
 
