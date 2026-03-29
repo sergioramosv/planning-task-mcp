@@ -90,7 +90,7 @@ export const taskTools = {
   },
 
   create_task: {
-    description: 'Crea una nueva tarea con User Story, puntos de negocio/desarrollo, criterios de aceptación, desarrollador y épica obligatorios. Si no se pasa developer, se auto-asigna el miembro del proyecto con menos carga. La prioridad se calcula automáticamente como bizPoints/devPoints.',
+    description: 'Crea una nueva tarea con User Story, puntos de negocio/desarrollo, criterios de aceptación, desarrollador, sprint y épica OBLIGATORIOS. Si no se pasa developer o sprintId, se listan los disponibles para que elijas. La prioridad se calcula automáticamente como bizPoints/devPoints.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,7 +116,7 @@ export const taskTools = {
         bizPoints: { type: 'number', enum: BIZ_FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13,21,34). Valor de negocio de la tarea.' },
         devPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de desarrollo (Fibonacci: 1,2,3,5,8,13). Esfuerzo técnico.' },
         sprintId: { type: 'string', description: 'ID del sprint al que pertenece (OBLIGATORIO)' },
-        developer: { type: 'string', description: 'UID del desarrollador asignado. Si no se pasa, se auto-asigna el miembro con menos carga del proyecto.' },
+        developer: { type: 'string', description: 'UID del desarrollador asignado (OBLIGATORIO). Si no se pasa, se listan los miembros disponibles.' },
         coDeveloper: { type: 'string', description: 'UID del co-desarrollador (opcional)' },
         startDate: { type: 'string', description: 'Fecha de inicio (YYYY-MM-DD, opcional)' },
         endDate: { type: 'string', description: 'Fecha de fin (YYYY-MM-DD, opcional)' },
@@ -169,7 +169,7 @@ export const taskTools = {
         userId: { type: 'string', description: 'UID del creador. Si no se pasa, usa el default.' },
         userName: { type: 'string', description: 'Nombre del creador.' },
       },
-      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests', 'epicId', 'sprintId'],
+      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests', 'epicId', 'sprintId', 'developer'],
     },
     handler: async ({ projectId, epicId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, parentTaskId, blockedBy, blocks, userId, userName }) => {
       const uid = userId || config.defaultUserId;
@@ -187,9 +187,16 @@ export const taskTools = {
         return { error: `Épica ${epicId} no encontrada en el proyecto ${projectId}` };
       }
 
-      // Validate sprintId
+      // Validate sprintId — list available sprints if missing
       if (!sprintId) {
-        return { error: 'Se requiere sprintId. Toda tarea debe pertenecer a un sprint.' };
+        const allSprints = await getAll('sprints');
+        const projectSprints = allSprints
+          .filter(s => s.projectId === projectId)
+          .map(s => ({ id: s.id, name: s.name, status: s.status, startDate: s.startDate, endDate: s.endDate }));
+        if (projectSprints.length === 0) {
+          return { error: 'Se requiere sprintId pero el proyecto no tiene sprints. Crea un sprint primero con create_sprint.' };
+        }
+        return { error: `Se requiere sprintId. Sprints disponibles en el proyecto:\n${projectSprints.map(s => `  - ${s.id} → "${s.name}" (${s.status}, ${s.startDate} a ${s.endDate})`).join('\n')}\n\nPasa uno de estos IDs como sprintId.` };
       }
       const sprint = await getById('sprints', sprintId);
       if (!sprint || sprint.projectId !== projectId) {
@@ -208,24 +215,21 @@ export const taskTools = {
         return { error: 'Se requiere al menos un test. Define tests con description y tipo (unit/integration/e2e/manual).' };
       }
 
-      // Auto-assign developer if not provided: find project member with least load
+      // Validate developer — list available members if missing
       if (!developer) {
         const memberIds = project.members ? Object.keys(project.members) : [];
         if (memberIds.length === 0) {
-          return { error: 'No se puede auto-asignar developer: el proyecto no tiene miembros. Añade miembros al proyecto primero.' };
+          return { error: 'Se requiere developer pero el proyecto no tiene miembros. Añade miembros al proyecto primero con add_member.' };
         }
-        const allTasks = await getAll(PATH);
-        const projectTasks = allTasks.filter(t => t.projectId === projectId && t.status !== 'done');
-        let minLoad = Infinity;
-        let bestDev = memberIds[0];
-        for (const mid of memberIds) {
-          const load = projectTasks.filter(t => t.developer === mid).reduce((sum, t) => sum + (t.devPoints || 0), 0);
-          if (load < minLoad) {
-            minLoad = load;
-            bestDev = mid;
-          }
-        }
-        developer = bestDev;
+        const users = await getAll('users');
+        const usersMap = Object.fromEntries(users.map(u => [u.id || u.uid, u]));
+        const memberList = memberIds.map(uid => {
+          const user = usersMap[uid];
+          const memberData = project.members[uid];
+          const role = typeof memberData === 'object' ? (memberData.role || 'member') : 'member';
+          return `  - ${uid} → "${user?.displayName || 'Sin nombre'}" (${user?.email || '?'}, rol: ${role})`;
+        });
+        return { error: `Se requiere developer. Miembros disponibles en el proyecto:\n${memberList.join('\n')}\n\nPasa uno de estos UIDs como developer.` };
       }
 
       // Validate parentTaskId exists in same project
@@ -281,7 +285,7 @@ export const taskTools = {
         bizPoints,
         devPoints,
         priority,
-        developer: developer || '',
+        developer,
         coDeveloper: coDeveloper || '',
         startDate: startDate || '',
         endDate: endDate || '',

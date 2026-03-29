@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0] - 2026-03-29
+
+### Changed
+- `developer` ahora es OBLIGATORIO en `create_task` — si no se pasa, devuelve la lista de miembros del proyecto con UID, nombre, email y rol para que elijas
+- `sprintId` si no se pasa, devuelve la lista de sprints del proyecto con ID, nombre, estado y fechas para que elijas
+- Eliminada auto-asignación de developer por carga — ahora siempre se elige explícitamente
+
 ## [1.1.0] - 2026-03-29
 
 ### Changed
