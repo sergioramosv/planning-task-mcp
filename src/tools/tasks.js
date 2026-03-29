@@ -115,7 +115,7 @@ export const taskTools = {
         },
         bizPoints: { type: 'number', enum: BIZ_FIBONACCI, description: 'Puntos de negocio (Fibonacci: 1,2,3,5,8,13,21,34). Valor de negocio de la tarea.' },
         devPoints: { type: 'number', enum: FIBONACCI, description: 'Puntos de desarrollo (Fibonacci: 1,2,3,5,8,13). Esfuerzo técnico.' },
-        sprintId: { type: 'string', description: 'ID del sprint (opcional, se puede asignar después)' },
+        sprintId: { type: 'string', description: 'ID del sprint al que pertenece (OBLIGATORIO)' },
         developer: { type: 'string', description: 'UID del desarrollador asignado. Si no se pasa, se auto-asigna el miembro con menos carga del proyecto.' },
         coDeveloper: { type: 'string', description: 'UID del co-desarrollador (opcional)' },
         startDate: { type: 'string', description: 'Fecha de inicio (YYYY-MM-DD, opcional)' },
@@ -169,7 +169,7 @@ export const taskTools = {
         userId: { type: 'string', description: 'UID del creador. Si no se pasa, usa el default.' },
         userName: { type: 'string', description: 'Nombre del creador.' },
       },
-      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests', 'epicId'],
+      required: ['projectId', 'title', 'userStory', 'acceptanceCriteria', 'bizPoints', 'devPoints', 'tests', 'epicId', 'sprintId'],
     },
     handler: async ({ projectId, epicId, title, userStory, acceptanceCriteria, bizPoints, devPoints, sprintId, developer, coDeveloper, startDate, endDate, status, implementationPlan, tests, attachments, parentTaskId, blockedBy, blocks, userId, userName }) => {
       const uid = userId || config.defaultUserId;
@@ -185,6 +185,15 @@ export const taskTools = {
       const epic = await getById('epics', epicId);
       if (!epic || epic.projectId !== projectId) {
         return { error: `Épica ${epicId} no encontrada en el proyecto ${projectId}` };
+      }
+
+      // Validate sprintId
+      if (!sprintId) {
+        return { error: 'Se requiere sprintId. Toda tarea debe pertenecer a un sprint.' };
+      }
+      const sprint = await getById('sprints', sprintId);
+      if (!sprint || sprint.projectId !== projectId) {
+        return { error: `Sprint ${sprintId} no encontrado en el proyecto ${projectId}` };
       }
 
       if (!FIBONACCI.includes(devPoints)) {
@@ -266,7 +275,7 @@ export const taskTools = {
       const taskData = {
         title,
         projectId,
-        sprintId: sprintId || '',
+        sprintId,
         userStory,
         acceptanceCriteria: acceptanceCriteria.filter(c => c.trim().length > 0),
         bizPoints,
